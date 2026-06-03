@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+venv/
+env/
+.env
+*.env.local
+*.sqlite3
+*.db
+
+# FastAPI / SQLite
+agentic_devops.db
+agentic_devops.db-shm
+agentic_devops.db-wal
+
+# Node / React
+node_modules/
+dist/
+.vite/
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
