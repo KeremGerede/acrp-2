@@ -6,9 +6,32 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.integration import ProjectIntegration
 from app.schemas.integration import IntegrationCreate, IntegrationUpdate, IntegrationResponse
-from app.core.config import settings
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
+
+
+def _derive_fields(payload: dict) -> dict:
+    """
+    Auto-derive repository_owner, repository_name, and repository_url
+    from repository_full_name when they are not explicitly provided.
+    """
+    full_name = payload.get("repository_full_name") or ""
+
+    if full_name and "/" in full_name:
+        owner, name = full_name.split("/", 1)
+        if not payload.get("repository_owner"):
+            payload["repository_owner"] = owner
+        if not payload.get("repository_name"):
+            payload["repository_name"] = name
+
+    provider = payload.get("provider", "github")
+    if full_name and not payload.get("repository_url"):
+        if provider == "github":
+            payload["repository_url"] = f"https://github.com/{full_name}"
+        elif provider == "gitlab":
+            payload["repository_url"] = f"https://gitlab.com/{full_name}"
+
+    return payload
 
 
 @router.get("", response_model=List[IntegrationResponse])
@@ -25,6 +48,7 @@ def create_integration(data: IntegrationCreate, db: Session = Depends(get_db)):
     recipients = payload.pop("notification_recipients", [])
     if not payload.get("webhook_secret"):
         payload["webhook_secret"] = secrets.token_hex(24)
+    payload = _derive_fields(payload)
     integration = ProjectIntegration(**payload, notification_recipients=json.dumps(recipients or []))
     db.add(integration)
     db.commit()
@@ -48,6 +72,7 @@ def update_integration(integration_id: int, data: IntegrationUpdate, db: Session
     payload = data.model_dump(exclude_none=True)
     if "notification_recipients" in payload:
         payload["notification_recipients"] = json.dumps(payload["notification_recipients"])
+    payload = _derive_fields(payload)
     for k, v in payload.items():
         setattr(i, k, v)
     db.commit()
@@ -70,16 +95,17 @@ def webhook_info(integration_id: int, db: Session = Depends(get_db)):
     if not i:
         raise HTTPException(status_code=404, detail="Integration not found")
     return {
-        "webhook_url": f"{{BASE_URL}}/api/webhooks/{i.provider}/{i.id}",
+        "webhook_url": f"{{your-ngrok-url}}/api/webhooks/{i.provider}/{i.id}",
         "webhook_secret": i.webhook_secret,
+        "integration_id": i.id,
+        "provider": i.provider,
         "instructions": [
-            f"1. Go to your {i.provider.title()} repository settings > Webhooks.",
-            "2. Add a new webhook.",
-            f"3. Payload URL: {{your-public-url}}/api/webhooks/{i.provider}/{i.id}",
-            "4. Content type: application/json",
-            f"5. Secret: {i.webhook_secret}",
-            "6. Events: Select 'Pull requests' and 'Pushes'.",
-            "7. Save the webhook.",
+            f"1. Go to your GitHub repo → Settings → Webhooks → Add webhook.",
+            f"2. Payload URL: https://YOUR-NGROK.ngrok.io/api/webhooks/{i.provider}/{i.id}",
+            "3. Content type: application/json",
+            f"4. Secret: {i.webhook_secret}",
+            "5. Events: check 'Pull requests' AND 'Pushes'.",
+            "6. Save the webhook.",
         ],
     }
 
@@ -89,4 +115,4 @@ def sync_integration(integration_id: int, db: Session = Depends(get_db)):
     i = db.query(ProjectIntegration).filter_by(id=integration_id).first()
     if not i:
         raise HTTPException(status_code=404, detail="Integration not found")
-    return {"status": "ok", "message": "Sync triggered (stub — full sync not yet implemented for MVP)"}
+    return {"status": "ok", "message": "Sync triggered (stub — not yet implemented)"}

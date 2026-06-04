@@ -69,10 +69,17 @@ class GitHubAdapter(ProviderAdapter):
             is_merge = False
             source_branch = None
             for msg in commit_messages:
-                merge_match = re.match(r"Merge (?:branch |pull request .+ from )'?([^']+)'?", msg)
-                if merge_match:
+                # "Merge pull request #N from owner/branch-name"
+                pr_match = re.match(r"Merge pull request #\d+ from [^/\s]+/(.+)", msg)
+                if pr_match:
                     is_merge = True
-                    source_branch = merge_match.group(1).strip()
+                    source_branch = pr_match.group(1).strip()
+                    break
+                # "Merge branch 'branch-name' into 'target'" or "Merge branch 'branch-name'"
+                branch_match = re.match(r"Merge branch '?([^'\s]+)'?", msg)
+                if branch_match:
+                    is_merge = True
+                    source_branch = branch_match.group(1).strip()
                     break
 
             actor_email = pusher.get("email") or (head_commit.get("author") or {}).get("email")
