@@ -36,17 +36,40 @@ def fetch_changed_files(
     return filtered
 
 
-def format_diff_for_prompt(files: List[Dict[str, Any]], max_chars: int = 40000) -> str:
+def format_diff_for_prompt(
+    files: List[Dict[str, Any]],
+    commit_messages: Optional[List[str]] = None,
+    max_chars: int = 40_000,
+) -> str:
     parts = []
     total = 0
+
+    if commit_messages:
+        msgs = "\n".join(f"  - {m}" for m in commit_messages if m)
+        header = f"## Commit Messages\n{msgs}\n\n## Changed Files ({len(files)} file(s))\n"
+        parts.append(header)
+        total += len(header)
+
     for f in files:
-        filename = f.get("filename", "unknown")
-        status   = f.get("status", "modified")
-        patch    = f.get("patch", "")
-        entry = f"### {filename} ({status})\n```\n{patch}\n```\n"
-        if total + len(entry) > max_chars:
-            parts.append(f"### {filename} — truncated (diff too large)\n")
+        filename  = f.get("filename", "unknown")
+        status    = f.get("status", "modified")
+        patch     = f.get("patch", "") or ""
+        additions = f.get("additions", 0)
+        deletions = f.get("deletions", 0)
+
+        file_header = (
+            f"### {filename}  [{status}]  "
+            f"+{additions} -{deletions} lines\n"
+        )
+        block = f"{file_header}```diff\n{patch}\n```\n\n"
+
+        if total + len(block) > max_chars:
+            truncated = f"### {filename}  [{status}] — diff truncated (too large)\n\n"
+            parts.append(truncated)
+            total += len(truncated)
             break
-        parts.append(entry)
-        total += len(entry)
-    return "\n".join(parts) if parts else "No diff available."
+
+        parts.append(block)
+        total += len(block)
+
+    return "".join(parts) if parts else "No diff available."

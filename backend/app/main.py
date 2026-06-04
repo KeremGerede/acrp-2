@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.database import create_tables
+from app.db.migrations import run_migrations
 
 # Import all models so SQLAlchemy registers them before create_tables()
 import app.models  # noqa: F401
@@ -43,6 +44,8 @@ app.add_middleware(
 def startup():
     logger.info("Creating database tables...")
     create_tables()
+    logger.info("Running schema migrations...")
+    run_migrations()
     logger.info("Database ready.")
 
 

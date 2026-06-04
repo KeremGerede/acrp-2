@@ -96,10 +96,12 @@ class EmailService:
             return False
 
     # ── Code Review ───────────────────────────────────────────────────────────
-    def build_review_body(self, review_run, findings: list) -> str:
+    def build_review_body(self, review_run, findings: list, improvements: list = None) -> str:
+        improvements = improvements or []
         result      = review_run.result or "unknown"
-        hdr_color   = "#16a34a" if result == "success" else "#dc2626"
-        result_text = "✅ PASSED" if result == "success" else "❌ FAILED"
+        passed      = result == "success"
+        hdr_color   = "#16a34a" if passed else "#dc2626"
+        result_text = "✅ APPROVED" if passed else "❌ REJECTED"
 
         # Meta table
         meta = "\n".join(f"""
@@ -124,8 +126,9 @@ class EmailService:
         if findings:
             rows = ""
             for f in findings[:30]:
-                sev   = (f.severity  or "info").lower()
-                cat   = (f.category  or "other")
+                sev = (f.severity or "info").lower()
+                cat = (f.category or "other")
+                rule_label = f'<br><span style="font-size:10px;color:#9ca3af">{f.rule_title}</span>' if f.rule_title else ""
                 rows += f"""
                 <tr>
                   <td style="font-family:monospace;font-size:11px;color:#6b7280">
@@ -133,7 +136,7 @@ class EmailService:
                   </td>
                   <td>{_badge(sev)}</td>
                   <td>{_badge(cat)}</td>
-                  <td style="font-weight:500">{f.issue or "—"}</td>
+                  <td style="font-weight:500">{f.issue or "—"}{rule_label}</td>
                   <td style="color:#374151">{f.suggestion or "—"}</td>
                 </tr>"""
             findings_section = f"""
@@ -148,7 +151,43 @@ class EmailService:
                 <tbody>{rows}</tbody>
               </table>"""
         else:
-            findings_section = "<p style='color:#6b7280;font-style:italic'>No findings.</p>"
+            findings_section = "<p style='color:#6b7280;font-style:italic'>No findings detected.</p>"
+
+        # Improvements section
+        improvements_section = ""
+        if improvements:
+            imp_rows = ""
+            for imp in improvements[:10]:
+                imp_rows += f"""
+                <tr>
+                  <td style="font-family:monospace;font-size:11px;color:#6b7280">{imp.get('file_path') or '—'}</td>
+                  <td style="font-weight:500;color:#374151">{imp.get('title') or '—'}</td>
+                  <td style="color:#374151">{imp.get('suggestion') or '—'}</td>
+                </tr>"""
+            improvements_section = f"""
+              <h3>Suggested Improvements ({len(improvements)})</h3>
+              <table class="findings">
+                <thead>
+                  <tr><th>File</th><th>Improvement</th><th>Suggestion</th></tr>
+                </thead>
+                <tbody>{imp_rows}</tbody>
+              </table>"""
+
+        # Next-step message
+        if passed:
+            next_step = """
+              <div style="margin-top:16px;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px">
+                <p style="margin:0;font-size:13px;color:#166534">
+                  ✅ Review <strong>approved</strong>. Functional test phase will start automatically if tests are configured.
+                </p>
+              </div>"""
+        else:
+            next_step = """
+              <div style="margin-top:16px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px">
+                <p style="margin:0;font-size:13px;color:#991b1b">
+                  ❌ Review <strong>rejected</strong>. Functional tests will <strong>not</strong> run until blocking issues are resolved.
+                </p>
+              </div>"""
 
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -158,7 +197,7 @@ class EmailService:
   <div class="hdr" style="background:{hdr_color}">
     <h2 style="color:#fff">Code Review — {result_text}</h2>
     <p style="color:rgba(255,255,255,.85);margin:0;font-size:13px">
-      {review_run.task_key or "N/A"} · {review_run.sprint_name or "N/A"}
+      {review_run.task_key or "N/A"} &middot; {review_run.sprint_name or "N/A"}
     </p>
   </div>
   <div class="body">
@@ -171,6 +210,8 @@ class EmailService:
     <p>{review_run.decision_reason or "—"}</p>
 
     {findings_section}
+    {improvements_section}
+    {next_step}
   </div>
 </div>
 </body></html>"""

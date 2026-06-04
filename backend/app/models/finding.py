@@ -8,6 +8,7 @@ class Finding(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     merge_review_run_id = Column(Integer, ForeignKey("merge_review_runs.id"), nullable=False, index=True)
+    rule_id = Column(Integer, ForeignKey("review_rules.id"), nullable=True)
     file_path = Column(String(500))
     line_number = Column(Integer)
     rule_title = Column(String(255))
