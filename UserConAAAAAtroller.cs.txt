@@ -1,0 +1,84 @@
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using SocialPlaylist.Repository;
+using System.Security.Claims;
+
+namespace SocialPlaylist.API.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class UserController : ControllerBase
+    {
+        private readonly AppDbContext _context;
+
+        public UserController(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        [HttpGet("stats")]
+        public async Task<IActionResult> GetStats()
+        {
+            var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (userIdStr == null) return Unauthorized();
+
+            var userId = int.Parse(userIdStr);
+
+            var user = await _context.AppUsers
+                .Include(u => u.Followers)
+                .Include(u => u.Following)
+                .Include(u => u.Playlists)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null) return NotFound();
+
+            return Ok(new
+            {
+                playlistCount = user.Playlists?.Count ?? 0,
+                followerCount = user.Followers?.Count ?? 0,
+                followingCount = user.Following?.Count ?? 0
+            });
+        }
+
+        [HttpPost("upload-photo")]
+        public async Task<IActionResult> UploadPhoto(IFormFile file)
+        {
+            var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (userIdStr == null) return Unauthorized();
+            var userId = int.Parse(userIdStr);
+
+            if (file == null || file.Length == 0) return BadRequest("Dosya boş.");
+
+            // Dosyayı base64'e çevir ve veritabanına kaydet
+            using var ms = new MemoryStream();
+            await file.CopyToAsync(ms);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+            var photoUrl = $"data:{file.ContentType};base64,{base64}";
+
+            var user = await _context.AppUsers.FindAsync(userId);
+            if (user == null) return NotFound();
+
+            user.ProfilePhotoUrl = photoUrl;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { profilePhotoUrl = photoUrl });
+        }
+
+        [HttpGet("photo")]
+        public async Task<IActionResult> GetPhoto()
+        {
+            var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (userIdStr == null) return Unauthorized();
+            var userId = int.Parse(userIdStr);
+
+            var user = await _context.AppUsers.FindAsync(userId);
+            if (user == null) return NotFound();
+
+            return Ok(new { profilePhotoUrl = user.ProfilePhotoUrl });
+        }
+
+
+    }
+}
