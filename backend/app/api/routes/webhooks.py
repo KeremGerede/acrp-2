@@ -76,24 +76,19 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
 
         # ── Fetch changed files ──────────────────────────────────────────────
         changed_files: List[dict] = []
-        if event_log.before_sha and event_log.after_sha:
-            try:
-                token = _get_token(db, integration_id)
-                changed_files = fetch_changed_files(
-                    provider=event_log.provider,
-                    repo_full_name=repo_full_name,
-                    before_sha=event_log.before_sha,
-                    after_sha=event_log.after_sha,
-                    token=token,
-                )
-                logger.info(f"Fetched {len(changed_files)} changed file(s) for review run")
-            except Exception as exc:
-                logger.warning(f"Could not fetch changed files: {exc}")
-        else:
-            logger.warning(
-                f"Skipping diff fetch — before_sha={event_log.before_sha!r} "
-                f"after_sha={event_log.after_sha!r}"
+        try:
+            token = _get_token(db, integration_id)
+            changed_files = fetch_changed_files(
+                provider=event_log.provider,
+                repo_full_name=repo_full_name,
+                before_sha=event_log.before_sha,
+                after_sha=event_log.after_sha,
+                token=token,
+                commit_sha=event_log.commit_sha,
             )
+            logger.info(f"Fetched {len(changed_files)} changed file(s) for review run")
+        except Exception as exc:
+            logger.warning(f"Could not fetch changed files: {exc}")
 
         # ── Create MergeReviewRun ────────────────────────────────────────────
         review_start = datetime.utcnow()

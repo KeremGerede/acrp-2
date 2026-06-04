@@ -1,11 +1,28 @@
 import logging
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 from app.providers.registry import get_adapter
 from app.utils.file_filters import filter_files
 
 log = logging.getLogger(__name__)
 
-_NULL_SHA = "0" * 40   # GitHub sends this for new-branch pushes
+_NULL_SHA = "0" * 40
+
+
+def _normalize_repo_name(repo_full_name: str) -> str:
+    """
+    GitHub API expects 'owner/repo' but the DB may store a full URL
+    like 'https://github.com/owner/repo'. Extract just the path part.
+    """
+    if not repo_full_name:
+        return ""
+    if "://" in repo_full_name:
+        path = urlparse(repo_full_name).path.strip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        log.debug(f"Normalized repo name: {repo_full_name!r} → {path!r}")
+        return path
+    return repo_full_name
 
 
 def fetch_changed_files(
@@ -14,26 +31,87 @@ def fetch_changed_files(
     before_sha: Optional[str],
     after_sha: Optional[str],
     token: Optional[str] = None,
+    commit_sha: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    if not before_sha or not after_sha:
-        log.warning(f"fetch_changed_files: missing SHA — before={before_sha!r} after={after_sha!r}")
-        return []
-
-    if before_sha == _NULL_SHA:
-        log.warning(
-            "fetch_changed_files: before_sha is all-zeros (new-branch push). "
-            "Cannot diff — add 'Pull requests' to your GitHub webhook events so "
-            "PR base/head SHAs are used instead."
-        )
-        return []
-
-    log.info(f"Fetching diff: {repo_full_name}  {before_sha[:8]}...{after_sha[:8]}")
+    """
+    Fetch changed files using a multi-fallback strategy:
+      1. Compare before_sha...after_sha  (most accurate, requires both SHAs)
+      2. Fetch merge commit_sha directly (reliable for all merge events)
+      3. Fetch after_sha as a commit     (last resort if commit_sha unavailable)
+    Each strategy is tried in order; the first non-empty result wins.
+    """
     adapter = get_adapter(provider)
-    files = adapter.fetch_changed_files(repo_full_name, before_sha, after_sha, token=token)
+    repo_full_name = _normalize_repo_name(repo_full_name)
 
-    filtered = filter_files(files)
-    log.info(f"Diff result: {len(files)} total file(s), {len(filtered)} after filter")
-    return filtered
+    def _filter_and_log(files: List[dict], strategy: str) -> List[dict]:
+        filtered = filter_files(files)
+        log.info(
+            f"[{strategy}] {repo_full_name}: "
+            f"{len(files)} file(s) from API, {len(filtered)} after filter"
+        )
+        return filtered
+
+    # ── Strategy 1: compare before...after ──────────────────────────────────
+    if (
+        before_sha
+        and after_sha
+        and before_sha != _NULL_SHA
+        and after_sha != _NULL_SHA
+    ):
+        log.info(
+            f"Strategy 1 — compare: {before_sha[:8]}...{after_sha[:8]} "
+            f"on {repo_full_name}"
+        )
+        try:
+            files = adapter.fetch_changed_files(
+                repo_full_name, before_sha, after_sha, token=token
+            )
+            if files:
+                return _filter_and_log(files, "compare")
+            log.warning("Strategy 1 returned 0 files — falling back to commit fetch")
+        except Exception as exc:
+            log.warning(f"Strategy 1 failed: {exc}")
+    else:
+        log.warning(
+            f"Strategy 1 skipped — before_sha={before_sha!r} after_sha={after_sha!r}"
+        )
+
+    # ── Strategy 2: fetch merge commit directly ──────────────────────────────
+    target_commit = commit_sha or after_sha
+    if target_commit and target_commit != _NULL_SHA and hasattr(adapter, "fetch_commit_files"):
+        log.info(
+            f"Strategy 2 — commit fetch: {target_commit[:8]} on {repo_full_name}"
+        )
+        try:
+            files = adapter.fetch_commit_files(repo_full_name, target_commit, token=token)
+            if files:
+                return _filter_and_log(files, "commit")
+            log.warning("Strategy 2 returned 0 files — no more fallbacks")
+        except Exception as exc:
+            log.warning(f"Strategy 2 failed: {exc}")
+
+    # ── Strategy 3: after_sha as commit (if different from commit_sha) ───────
+    if (
+        after_sha
+        and after_sha != _NULL_SHA
+        and after_sha != target_commit
+        and hasattr(adapter, "fetch_commit_files")
+    ):
+        log.info(
+            f"Strategy 3 — after_sha commit fetch: {after_sha[:8]} on {repo_full_name}"
+        )
+        try:
+            files = adapter.fetch_commit_files(repo_full_name, after_sha, token=token)
+            if files:
+                return _filter_and_log(files, "after_sha_commit")
+        except Exception as exc:
+            log.warning(f"Strategy 3 failed: {exc}")
+
+    log.warning(
+        f"All fetch strategies returned 0 files for {repo_full_name}. "
+        f"Check token, repo visibility, and SHA values."
+    )
+    return []
 
 
 def format_diff_for_prompt(
