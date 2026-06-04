@@ -1,0 +1,858 @@
+// src/pages/DashboardPage.tsx
+import React, { useRef, useState, useEffect } from 'react';
+import { 
+  Globe,
+  CheckCircle, 
+  XCircle, 
+  PlayCircle, 
+  Activity, 
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  History,
+  ClipboardCheck,
+  SlidersHorizontal,
+  BadgeCheck
+} from 'lucide-react';
+import { useGSAP } from '../hooks/useGSAP';
+import { staggerCards } from '../utils/animations';
+import { 
+  getSystemStatsSummary, 
+  getEventLogs, 
+  getMergeReviews 
+} from '../services/mockData';
+import type { SystemStatsSummary } from '../types/stats';
+import type { EventLog } from '../types/event';
+import type { MergeReview } from '../types/review';
+import { gsap } from 'gsap';
+
+export const DashboardPage: React.FC = () => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  const [stats, setStats] = useState<SystemStatsSummary | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  // Events pagination & search state
+  const [events, setEvents] = useState<EventLog[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsPage, setEventsPage] = useState(1);
+  const [eventsTotalPages, setEventsTotalPages] = useState(1);
+  const [eventsTotalCount, setEventsTotalCount] = useState(0);
+  const [eventsSearch, setEventsSearch] = useState('');
+
+  // Reviews pagination & search state
+  const [reviews, setReviews] = useState<MergeReview[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [reviewsPage, setReviewsPage] = useState(1);
+  const [reviewsTotalPages, setReviewsTotalPages] = useState(1);
+  const [reviewsTotalCount, setReviewsTotalCount] = useState(0);
+  const [reviewsSearch, setReviewsSearch] = useState('');
+
+  // Fetch stats on mount
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const statsData = await getSystemStatsSummary();
+        setStats(statsData);
+      } catch (err) {
+        console.error('Error loading stats data', err);
+      } finally {
+        setStatsLoading(false);
+      }
+    };
+    fetchStats();
+  }, []);
+
+  // Fetch Events
+  const loadEventsData = async (currentPage = eventsPage, currentSearch = eventsSearch) => {
+    setEventsLoading(true);
+    try {
+      const res = await getEventLogs(currentPage, 5, currentSearch);
+      setEvents(res.data);
+      setEventsTotalPages(res.totalPages);
+      setEventsTotalCount(res.totalCount);
+    } catch (err) {
+      console.error('Error loading events data', err);
+    } finally {
+      setEventsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadEventsData(eventsPage, eventsSearch);
+  }, [eventsPage]);
+
+  // Fetch Reviews
+  const loadReviewsData = async (currentPage = reviewsPage, currentSearch = reviewsSearch) => {
+    setReviewsLoading(true);
+    try {
+      const res = await getMergeReviews(currentPage, 5, currentSearch);
+      setReviews(res.data);
+      setReviewsTotalPages(res.totalPages);
+      setReviewsTotalCount(res.totalCount);
+    } catch (err) {
+      console.error('Error loading reviews data', err);
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadReviewsData(reviewsPage, reviewsSearch);
+  }, [reviewsPage]);
+
+  const handleEventsSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setEventsPage(1);
+    loadEventsData(1, eventsSearch);
+  };
+
+  const handleReviewsSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setReviewsPage(1);
+    loadReviewsData(1, reviewsSearch);
+  };
+
+  // Run GSAP entrance animations once stats loading is completed
+  useGSAP(() => {
+    if (statsLoading || !containerRef.current) return;
+
+    // Stagger KPI Cards
+    staggerCards(containerRef.current.querySelectorAll('.kpi-card'));
+    
+    // Animate numbers
+    const counters = containerRef.current.querySelectorAll('.kpi-number');
+    counters.forEach((counter: any) => {
+      const targetVal = parseInt(counter.getAttribute('data-target') || '0', 10);
+      if (targetVal > 0) {
+        const obj = { value: 0 };
+        gsap.to(obj, {
+          value: targetVal,
+          duration: 1,
+          ease: 'power2.out',
+          onUpdate: () => {
+            counter.textContent = Math.round(obj.value);
+          }
+        });
+      }
+    });
+
+    // Animate tables columns
+    gsap.from(containerRef.current.querySelectorAll('.table-section'), {
+      opacity: 0,
+      y: 25,
+      duration: 0.6,
+      stagger: 0.1,
+      ease: 'power2.out',
+    });
+  }, [statsLoading]);
+
+  if (statsLoading || !stats) {
+    return (
+      <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', height: '50vh', color: 'var(--accent-primary)' }}>
+        <span 
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '50%',
+            border: '3px solid var(--border)',
+            borderTopColor: 'var(--accent-primary)',
+            animation: 'spin 1s linear infinite',
+            display: 'inline-block',
+            marginRight: '0.75rem',
+          }}
+        />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>Veriler alınıyor...</span>
+        <style>{`
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  // Bind values dynamically to match the user's requested icons and sub-labels
+  const kpiDefinitions = [
+    { 
+      label: 'Entegrasyonlar (Integrations)', 
+      value: stats.totalIntegrations, 
+      badge: 'Bağlı',
+      badgeColor: 'var(--glow-blue)',
+      badgeTextColor: 'var(--accent-info)',
+      icon: <Globe size={20} />, 
+      color: 'var(--accent-info)',
+      subtext: 'Bağlı Git ve bulut servisleri'
+    },
+    { 
+      label: 'Başarılı İncelemeler (Reviews)', 
+      value: stats.totalReviewsSuccess, 
+      badge: '%100 Oran',
+      badgeColor: 'var(--glow-green)',
+      badgeTextColor: 'var(--accent-success)',
+      icon: <CheckCircle size={20} />, 
+      color: 'var(--accent-success)',
+      subtext: 'AI onaylı kod birleştirmeleri'
+    },
+    { 
+      label: 'Hatalı İncelemeler (Failed)', 
+      value: stats.totalReviewsFailed, 
+      badge: '0 Hata',
+      badgeColor: 'var(--glow-green)',
+      badgeTextColor: 'var(--accent-success)',
+      icon: <XCircle size={20} />, 
+      color: 'var(--accent-danger)',
+      subtext: 'AI tarafından reddedilen PR\'lar'
+    },
+    { 
+      label: 'Başarılı Testler (Tests)', 
+      value: stats.totalReviewsSuccess + stats.totalReviewsFailed > 0 ? stats.totalTestsSuccess : 0, 
+      badge: '%100 Başarı',
+      badgeColor: 'var(--glow-green)',
+      badgeTextColor: 'var(--accent-success)',
+      icon: <PlayCircle size={20} />, 
+      color: 'var(--accent-success)',
+      subtext: 'Geçen fonksiyonel test suitleri'
+    },
+    { 
+      label: 'Hatalı Testler (Failed)', 
+      value: stats.totalReviewsSuccess + stats.totalReviewsFailed > 0 ? stats.totalTestsFailed : 0, 
+      badge: 'Stabil',
+      badgeColor: 'var(--glow-green)',
+      badgeTextColor: 'var(--accent-success)',
+      icon: <AlertTriangle size={20} />, 
+      color: 'var(--accent-danger)',
+      subtext: 'Hata veren test koşumları'
+    },
+    { 
+      label: 'Toplam Olay (Events)', 
+      value: stats.totalEventsCount, 
+      badge: '+12% vs last week',
+      badgeColor: 'var(--glow-green)',
+      badgeTextColor: 'var(--accent-success)',
+      icon: <Activity size={20} />, 
+      color: 'var(--text-primary)',
+      subtext: 'Tetiklenen son webhook olayları'
+    },
+  ];
+
+  return (
+    <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      
+      {/* 8 KPI Cards Grid with Perspective and User Styling */}
+      <div 
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+          gap: '1.25rem',
+          perspective: '1200px'
+        }}
+      >
+        {kpiDefinitions.map((kpi, idx) => (
+          <div 
+            key={idx}
+            className="kpi-card"
+            style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderBottom: `4px solid ${kpi.color}`, // 3D thickness bevel
+              borderRadius: 'var(--border-radius-md)',
+              padding: '1.25rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              position: 'relative',
+              overflow: 'hidden',
+              boxShadow: '0 8px 16px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
+              transition: 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s ease, border-color 0.3s ease',
+              cursor: 'pointer',
+              transformStyle: 'preserve-3d'
+            }}
+          >
+            {/* Left accent line */}
+            <div 
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '4px',
+                height: '100%',
+                backgroundColor: kpi.color,
+              }}
+            />
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', transform: 'translateZ(15px)', flex: 1, paddingRight: '0.5rem' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                {kpi.label}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span 
+                  className="kpi-number"
+                  data-target={kpi.value}
+                  style={{
+                    fontSize: '2rem',
+                    fontWeight: 700,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--text-primary)',
+                    lineHeight: '1.2',
+                  }}
+                >
+                  0
+                </span>
+                {kpi.badge && (
+                  <span 
+                    style={{
+                      fontSize: '0.65rem',
+                      fontWeight: 700,
+                      padding: '0.15rem 0.4rem',
+                      borderRadius: '4px',
+                      backgroundColor: kpi.badgeColor,
+                      color: kpi.badgeTextColor,
+                      border: `1px solid ${kpi.color === 'var(--text-primary)' ? 'var(--border)' : kpi.color}`
+                    }}
+                  >
+                    {kpi.badge}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                {kpi.subtext}
+              </div>
+            </div>
+
+            {/* Right Graphic Container */}
+            <div 
+              style={{
+                padding: '0.75rem',
+                borderRadius: 'var(--border-radius-md)',
+                backgroundColor: 'var(--bg-elevated)',
+                color: kpi.color,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '1px solid var(--border)',
+                boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                transform: 'translateZ(10px)',
+              }}
+            >
+              {kpi.icon}
+            </div>
+          </div>
+        ))}
+      </div>
+ 
+      {/* Two Column Table Layout - Exactly matching the user's screenshots */}
+      <div 
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
+          gap: '1.5rem',
+          perspective: '1500px'
+        }}
+        className="dashboard-columns"
+      >
+        {/* Left Column: Recent Events */}
+        <section 
+          className="table-section"
+          style={{
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border)',
+            borderBottom: '5px solid var(--border-focus)', // 3D Thickness bevel
+            borderRadius: 'var(--border-radius-lg)',
+            padding: '1.5rem',
+            boxShadow: '0 12px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem',
+            position: 'relative',
+            minHeight: '430px',
+            transition: 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.4s ease, border-color 0.4s ease',
+            transformStyle: 'preserve-3d'
+          }}
+        >
+          {/* Shimmer / loading overlay */}
+          {eventsLoading && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              backgroundColor: 'rgba(255, 255, 255, 0.4)',
+              backdropFilter: 'blur(1px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10,
+              borderRadius: 'var(--border-radius-lg)'
+            }}>
+              <span style={{
+                width: '24px',
+                height: '24px',
+                borderRadius: '50%',
+                border: '2px solid var(--border)',
+                borderTopColor: 'var(--accent-primary)',
+                animation: 'spin 1s linear infinite'
+              }} />
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', transform: 'translateZ(15px)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <History size={18} style={{ color: 'var(--accent-primary)' }} />
+              <h3 style={{ fontSize: '0.9rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-primary)' }}>
+                SON OLAYLAR ({eventsTotalCount})
+              </h3>
+            </div>
+            
+            {/* Inline search box */}
+            <form onSubmit={handleEventsSearchSubmit} style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+              <input 
+                type="text" 
+                placeholder="Ara..." 
+                value={eventsSearch}
+                onChange={(e) => setEventsSearch(e.target.value)}
+                style={{
+                  padding: '0.25rem 0.5rem 0.25rem 1.6rem',
+                  fontSize: '0.75rem',
+                  borderRadius: '15px',
+                  border: '1px solid var(--border)',
+                  backgroundColor: 'var(--bg-primary)',
+                  color: 'var(--text-primary)',
+                  outline: 'none',
+                  width: '120px',
+                  transition: 'width 0.3s ease, border-color 0.3s ease',
+                }}
+                onFocus={(e) => {
+                  e.target.style.width = '170px';
+                  e.target.style.borderColor = 'var(--accent-primary)';
+                }}
+                onBlur={(e) => {
+                  if (!eventsSearch) {
+                    e.target.style.width = '120px';
+                  }
+                  e.target.style.borderColor = 'var(--border)';
+                }}
+              />
+              <Search size={12} style={{ position: 'absolute', left: '8px', color: 'var(--text-muted)' }} />
+            </form>
+          </div>
+
+          <div style={{ overflowX: 'auto', flex: 1, transform: 'translateZ(10px)' }} className="custom-scroll">
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>TÜR (TYPE)</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>AKTÖR (ACTOR)</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>DAL (BRANCH)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} style={{ padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.75rem', fontStyle: 'italic', textAlign: 'center' }}>
+                      Olay bulunamadı.
+                    </td>
+                  </tr>
+                ) : (
+                  events.map((evt) => {
+                    const isSystem = evt.source === 'webhook' || evt.source === 'system';
+                    return (
+                      <tr 
+                        key={evt.id}
+                        style={{ 
+                          borderBottom: '1px solid var(--border)',
+                          transition: 'background-color var(--transition-fast)'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                      >
+                        <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem' }}>
+                          <span 
+                            style={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '0.65rem',
+                              padding: '0.15rem 0.4rem',
+                              borderRadius: '4px',
+                              backgroundColor: isSystem ? 'var(--glow-blue)' : 'var(--glow-green)',
+                              color: isSystem ? 'var(--accent-primary)' : 'var(--accent-success)',
+                              border: `1px solid ${isSystem ? 'rgba(37, 99, 235, 0.15)' : 'rgba(5, 150, 105, 0.15)'}`,
+                              fontWeight: 700,
+                              textTransform: 'uppercase'
+                            }}
+                          >
+                            {isSystem ? 'SYSTEM' : 'TEST_RUN'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+                          KeremGerede
+                        </td>
+                        <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem' }}>
+                          <span 
+                            style={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '0.7rem',
+                              padding: '0.15rem 0.4rem',
+                              borderRadius: '4px',
+                              backgroundColor: 'var(--glow-blue)',
+                              color: 'var(--accent-primary)',
+                              border: '1px solid rgba(37, 99, 235, 0.15)',
+                              fontWeight: 600
+                            }}
+                          >
+                            {evt.source === 'review_agent' ? 'sprint2/task-2' : 'main'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Minimal Pagination Footer */}
+          {eventsTotalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: '0.5rem', marginTop: 'auto', transform: 'translateZ(15px)' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                Sayfa <strong>{eventsPage}</strong> / {eventsTotalPages}
+              </span>
+              <div style={{ display: 'flex', gap: '0.2rem' }}>
+                <button
+                  onClick={() => setEventsPage(p => Math.max(p - 1, 1))}
+                  disabled={eventsPage === 1}
+                  style={{
+                    padding: '0.15rem 0.35rem',
+                    fontSize: '0.7rem',
+                    border: '1px solid var(--border)',
+                    borderRadius: '3px',
+                    backgroundColor: 'var(--bg-primary)',
+                    color: eventsPage === 1 ? 'var(--text-muted)' : 'var(--text-primary)',
+                    cursor: eventsPage === 1 ? 'not-allowed' : 'pointer',
+                    outline: 'none',
+                    background: 'none'
+                  }}
+                >
+                  <ChevronLeft size={10} />
+                </button>
+                <button
+                  onClick={() => setEventsPage(p => Math.min(p + 1, eventsTotalPages))}
+                  disabled={eventsPage === eventsTotalPages}
+                  style={{
+                    padding: '0.15rem 0.35rem',
+                    fontSize: '0.7rem',
+                    border: '1px solid var(--border)',
+                    borderRadius: '3px',
+                    backgroundColor: 'var(--bg-primary)',
+                    color: eventsPage === eventsTotalPages ? 'var(--text-muted)' : 'var(--text-primary)',
+                    cursor: eventsPage === eventsTotalPages ? 'not-allowed' : 'pointer',
+                    outline: 'none',
+                    background: 'none'
+                  }}
+                >
+                  <ChevronRight size={10} />
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Right Column: Recent Reviews */}
+        <section 
+          className="table-section"
+          style={{
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border)',
+            borderBottom: '5px solid var(--border-focus)', // 3D Thickness bevel
+            borderRadius: 'var(--border-radius-lg)',
+            padding: '1.5rem',
+            boxShadow: '0 12px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem',
+            position: 'relative',
+            minHeight: '430px',
+            transition: 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.4s ease, border-color 0.4s ease',
+            transformStyle: 'preserve-3d'
+          }}
+        >
+          {/* Shimmer / loading overlay */}
+          {reviewsLoading && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              backgroundColor: 'rgba(255, 255, 255, 0.4)',
+              backdropFilter: 'blur(1px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10,
+              borderRadius: 'var(--border-radius-lg)'
+            }}>
+              <span style={{
+                width: '24px',
+                height: '24px',
+                borderRadius: '50%',
+                border: '2px solid var(--border)',
+                borderTopColor: 'var(--accent-primary)',
+                animation: 'spin 1s linear infinite'
+              }} />
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', transform: 'translateZ(15px)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <ClipboardCheck size={18} style={{ color: 'var(--accent-primary)' }} />
+              <h3 style={{ fontSize: '0.9rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-primary)' }}>
+                SON İNCELEMELER ({reviewsTotalCount})
+              </h3>
+            </div>
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              {/* Filter button */}
+              <button 
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '0.25rem',
+                  borderRadius: '4px'
+                }}
+                className="btn-transition"
+                title="Filtrele"
+              >
+                <SlidersHorizontal size={16} />
+              </button>
+
+              {/* Inline search box */}
+              <form onSubmit={handleReviewsSearchSubmit} style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+                <input 
+                  type="text" 
+                  placeholder="Ara..." 
+                  value={reviewsSearch}
+                  onChange={(e) => setReviewsSearch(e.target.value)}
+                  style={{
+                    padding: '0.25rem 0.5rem 0.25rem 1.6rem',
+                    fontSize: '0.75rem',
+                    borderRadius: '15px',
+                    border: '1px solid var(--border)',
+                    backgroundColor: 'var(--bg-primary)',
+                    color: 'var(--text-primary)',
+                    outline: 'none',
+                    width: '120px',
+                    transition: 'width 0.3s ease, border-color 0.3s ease',
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.width = '170px';
+                    e.target.style.borderColor = 'var(--accent-primary)';
+                  }}
+                  onBlur={(e) => {
+                    if (!reviewsSearch) {
+                      e.target.style.width = '120px';
+                    }
+                    e.target.style.borderColor = 'var(--border)';
+                  }}
+                />
+                <Search size={12} style={{ position: 'absolute', left: '8px', color: 'var(--text-muted)' }} />
+              </form>
+            </div>
+          </div>
+
+          <div style={{ overflowX: 'auto', flex: 1, transform: 'translateZ(10px)' }} className="custom-scroll">
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>SONUÇ (RESULT)</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>GÖREV (TASK)</th>
+                  <th style={{ padding: '0.75rem 0.5rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.05em' }}>RİSK (RISK)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reviews.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} style={{ padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.75rem', fontStyle: 'italic', textAlign: 'center' }}>
+                      Analiz bulunamadı.
+                    </td>
+                  </tr>
+                ) : (
+                  reviews.map((rev) => {
+                    const isSuccess = rev.status === 'success';
+                    return (
+                      <tr 
+                        key={rev.id}
+                        style={{ 
+                          borderBottom: '1px solid var(--border)',
+                          transition: 'background-color var(--transition-fast)'
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                      >
+                        <td style={{ padding: '0.75rem 0.5rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                          <span 
+                            style={{
+                              width: '6px',
+                              height: '6px',
+                              borderRadius: '50%',
+                              backgroundColor: isSuccess ? 'var(--accent-success)' : 'var(--accent-danger)',
+                              display: 'inline-block',
+                            }}
+                          />
+                          <span 
+                            style={{
+                              fontSize: '0.65rem',
+                              fontWeight: 750,
+                              padding: '0.15rem 0.4rem',
+                              borderRadius: '4px',
+                              backgroundColor: isSuccess ? 'var(--glow-green)' : 'var(--glow-red)',
+                              color: isSuccess ? 'var(--accent-success)' : 'var(--accent-danger)',
+                              border: `1px solid ${isSuccess ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'}`,
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {isSuccess ? 'BAŞARILI' : 'REDDEDİLDİ'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem 0.5rem', fontSize: '0.8rem', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                          {rev.taskId}
+                        </td>
+                        <td style={{ padding: '0.75rem 0.5rem' }}>
+                          <span 
+                            style={{
+                              fontSize: '0.65rem',
+                              fontWeight: 750,
+                              padding: '0.15rem 0.4rem',
+                              borderRadius: '4px',
+                              backgroundColor: rev.criticalIssuesCount === 0 ? 'var(--glow-blue)' : 'var(--glow-red)',
+                              color: rev.criticalIssuesCount === 0 ? 'var(--accent-primary)' : 'var(--accent-danger)',
+                              border: `1px solid ${rev.criticalIssuesCount === 0 ? 'rgba(37, 99, 235, 0.15)' : 'rgba(239, 68, 68, 0.15)'}`,
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {rev.criticalIssuesCount === 0 ? 'DÜŞÜK' : 'YÜKSEK'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Badge check for review status updates */}
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              gap: '0.35rem',
+              backgroundColor: 'var(--bg-elevated)',
+              border: '1px solid var(--border)',
+              padding: '0.5rem',
+              borderRadius: 'var(--border-radius-sm)',
+              marginTop: '0.75rem',
+              transform: 'translateZ(10px)',
+              position: 'relative'
+            }}
+          >
+            <BadgeCheck size={14} style={{ color: 'var(--text-muted)' }} />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Tüm incelemeler güncel</span>
+          </div>
+
+          {/* Faint decorative stars in bottom right corner */}
+          <div 
+            style={{ 
+              position: 'absolute', 
+              right: '15px', 
+              bottom: '15px', 
+              opacity: 0.05, 
+              pointerEvents: 'none', 
+              color: 'var(--accent-primary)', 
+              display: 'flex', 
+              gap: '0.4rem' 
+            }}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.4h7.8l-6.3 4.6 2.4 7.4-6.3-4.6-6.3 4.6 2.4-7.4-6.3-4.6h7.8z"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ marginTop: '8px' }}><path d="M12 2l2.4 7.4h7.8l-6.3 4.6 2.4 7.4-6.3-4.6-6.3 4.6 2.4-7.4-6.3-4.6h7.8z"/></svg>
+          </div>
+
+          {/* Minimal Pagination Footer */}
+          {reviewsTotalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: '0.5rem', marginTop: '0.5rem', transform: 'translateZ(15px)' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                Sayfa <strong>{reviewsPage}</strong> / {reviewsTotalPages}
+              </span>
+              <div style={{ display: 'flex', gap: '0.2rem' }}>
+                <button
+                  onClick={() => setReviewsPage(p => Math.max(p - 1, 1))}
+                  disabled={reviewsPage === 1}
+                  style={{
+                    padding: '0.15rem 0.35rem',
+                    fontSize: '0.7rem',
+                    border: '1px solid var(--border)',
+                    borderRadius: '3px',
+                    backgroundColor: 'var(--bg-primary)',
+                    color: reviewsPage === 1 ? 'var(--text-muted)' : 'var(--text-primary)',
+                    cursor: reviewsPage === 1 ? 'not-allowed' : 'pointer',
+                    outline: 'none',
+                    background: 'none'
+                  }}
+                >
+                  <ChevronLeft size={10} />
+                </button>
+                <button
+                  onClick={() => setReviewsPage(p => Math.min(p + 1, reviewsTotalPages))}
+                  disabled={reviewsPage === reviewsTotalPages}
+                  style={{
+                    padding: '0.15rem 0.35rem',
+                    fontSize: '0.7rem',
+                    border: '1px solid var(--border)',
+                    borderRadius: '3px',
+                    backgroundColor: 'var(--bg-primary)',
+                    color: reviewsPage === reviewsTotalPages ? 'var(--text-muted)' : 'var(--text-primary)',
+                    cursor: reviewsPage === eventsTotalPages ? 'not-allowed' : 'pointer',
+                    outline: 'none',
+                    background: 'none'
+                  }}
+                >
+                  <ChevronRight size={10} />
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <style>{`
+        @media (max-width: 900px) {
+          .dashboard-columns {
+            grid-template-columns: 1fr !important;
+          }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes pulse-dot {
+          0%, 100% { opacity: 0.4; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.2); }
+        }
+        
+        /* 3D Hover Animations with perspective depth */
+        .kpi-card:hover {
+          transform: translateY(-3px) rotateX(1.2deg) rotateY(-0.6deg) translateZ(4px);
+          box-shadow: 0 12px 22px rgba(0, 0, 0, 0.08), 0 3px 6px rgba(0, 0, 0, 0.04);
+          border-color: var(--accent-primary);
+        }
+        
+        .table-section:hover {
+          transform: translateY(-3px) rotateX(1.2deg) rotateY(-0.6deg) translateZ(4px);
+          box-shadow: 0 12px 22px rgba(0, 0, 0, 0.08), 0 3px 6px rgba(0, 0, 0, 0.04);
+          border-color: var(--accent-primary);
+        }
+      `}</style>
+    </div>
+  );
+};
+
+export default DashboardPage;
