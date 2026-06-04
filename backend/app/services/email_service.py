@@ -18,31 +18,66 @@ _SEV_COLOR = {
 
 _BASE_STYLE = """
   body  { font-family: Arial, sans-serif; background:#f8fafc; margin:0; padding:0; }
-  .wrap { max-width:700px; margin:24px auto; background:#fff;
+  .wrap { max-width:720px; margin:24px auto; background:#fff;
           border-radius:8px; overflow:hidden;
           box-shadow:0 1px 6px rgba(0,0,0,.12); }
   .hdr  { padding:20px 28px; }
   .body { padding:20px 28px; }
   h2   { margin:0 0 4px; font-size:20px; }
-  h3   { font-size:14px; color:#374151; margin:18px 0 6px; border-bottom:1px solid #e5e7eb; padding-bottom:4px; }
+  h3   { font-size:14px; color:#374151; margin:22px 0 8px;
+         border-bottom:2px solid #e5e7eb; padding-bottom:5px; }
   p    { margin:6px 0; font-size:14px; color:#374151; line-height:1.6; }
   table.meta { width:100%; border-collapse:collapse; font-size:13px; }
   table.meta td { padding:5px 0; vertical-align:top; }
-  table.meta td:first-child { color:#6b7280; width:160px; white-space:nowrap; }
-  table.findings { width:100%; border-collapse:collapse; font-size:13px; margin-top:6px; }
-  table.findings th { text-align:left; padding:7px 10px; background:#f1f5f9; color:#374151; border-bottom:2px solid #e2e8f0; }
-  table.findings td { padding:7px 10px; border-bottom:1px solid #f1f5f9; vertical-align:top; }
-  .badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600; }
-  .tag-success { background:#dcfce7; color:#166534; }
-  .tag-failed  { background:#fee2e2; color:#991b1b; }
-  .tag-low     { background:#f0fdf4; color:#166534; }
-  .tag-medium  { background:#fefce8; color:#854d0e; }
-  .tag-high    { background:#fff7ed; color:#9a3412; }
-  .tag-critical{ background:#fef2f2; color:#7f1d1d; }
-  .tag-warning { background:#fefce8; color:#854d0e; }
-  .tag-info    { background:#eff6ff; color:#1e40af; }
+  table.meta td:first-child { color:#6b7280; width:200px; white-space:nowrap; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:12px;
+           font-size:11px; font-weight:600; }
+  .tag-success  { background:#dcfce7; color:#166534; }
+  .tag-failed   { background:#fee2e2; color:#991b1b; }
+  .tag-low      { background:#f0fdf4; color:#166534; }
+  .tag-medium   { background:#fefce8; color:#854d0e; }
+  .tag-high     { background:#fff7ed; color:#9a3412; }
+  .tag-critical { background:#fef2f2; color:#7f1d1d; }
+  .tag-warning  { background:#fefce8; color:#854d0e; }
+  .tag-info     { background:#eff6ff; color:#1e40af; }
+  .finding-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .finding-header {
+    background: #f8fafc;
+    padding: 9px 14px;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 12px;
+    color: #374151;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .finding-body { padding: 12px 14px; }
+  .finding-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b7280;
+    margin: 10px 0 3px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+  }
+  .finding-label:first-child { margin-top: 0; }
+  .finding-value { font-size: 13px; color: #111827; line-height: 1.6; margin: 0; }
+  .finding-file  { font-family: monospace; font-size: 11px; color: #6b7280; margin: 0 0 8px; }
   pre { background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px;
-        padding:8px 10px; font-size:12px; overflow-x:auto; white-space:pre-wrap; }
+        padding:8px 10px; font-size:11px; overflow-x:auto; white-space:pre-wrap;
+        margin: 6px 0 0; }
+  .imp-card {
+    border-left: 3px solid #6366f1;
+    background: #f5f3ff;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+  }
 """
 
 
@@ -98,94 +133,124 @@ class EmailService:
     # ── Code Review ───────────────────────────────────────────────────────────
     def build_review_body(self, review_run, findings: list, improvements: list = None) -> str:
         improvements = improvements or []
-        result      = review_run.result or "unknown"
-        passed      = result == "success"
+        result  = review_run.result or "unknown"
+        passed  = result == "success"
         hdr_color   = "#16a34a" if passed else "#dc2626"
-        result_text = "✅ APPROVED" if passed else "❌ REJECTED"
+        result_text = "✅ ONAYLANDI" if passed else "❌ REDDEDİLDİ"
 
-        # Meta table
+        # ── Meta tablosu ─────────────────────────────────────────────────────
         meta = "\n".join(f"""
           <tr>
             <td>{label}</td>
             <td style="color:#111827;font-weight:500">{value}</td>
           </tr>""" for label, value in [
-            ("Task",             review_run.task_key        or "—"),
-            ("Sprint",           review_run.sprint_name     or "—"),
-            ("Source Branch",    review_run.source_branch   or "—"),
-            ("Target Branch",    review_run.target_branch   or "—"),
-            ("Actor",            review_run.actor_username  or "—"),
-            ("Commit",           (review_run.commit_sha or "—")[:12]),
-            ("Risk Level",       _badge(review_run.risk_level or "—")),
-            ("Files Analyzed",   str(review_run.total_files_analyzed)),
-            ("Total Findings",   str(review_run.total_findings)),
-            ("Blocking",         str(review_run.blocking_findings_count)),
+            ("Task",                      review_run.task_key        or "—"),
+            ("Sprint",                    review_run.sprint_name     or "—"),
+            ("Source Branch",             review_run.source_branch   or "—"),
+            ("Target Branch",             review_run.target_branch   or "—"),
+            ("İşlemi Yapan",              review_run.actor_username  or "—"),
+            ("Commit SHA",                (review_run.commit_sha or "—")[:12]),
+            ("Risk Seviyesi",             _badge(review_run.risk_level or "—")),
+            ("Analiz Edilen Dosya Sayısı",str(review_run.total_files_analyzed)),
+            ("Toplam Bulgu",              str(review_run.total_findings)),
+            ("Engelleyici Bulgu",         str(review_run.blocking_findings_count)),
         ])
 
-        # Findings table
-        findings_section = ""
+        # ── Bulgular (kart formatı) ───────────────────────────────────────────
         if findings:
-            rows = ""
-            for f in findings[:30]:
+            cards = ""
+            for idx, f in enumerate(findings, 1):
                 sev = (f.severity or "info").lower()
                 cat = (f.category or "other")
-                rule_label = f'<br><span style="font-size:10px;color:#9ca3af">{f.rule_title}</span>' if f.rule_title else ""
-                rows += f"""
-                <tr>
-                  <td style="font-family:monospace;font-size:11px;color:#6b7280">
-                    {f.file_path or "—"}{f" :{f.line_number}" if f.line_number else ""}
-                  </td>
-                  <td>{_badge(sev)}</td>
-                  <td>{_badge(cat)}</td>
-                  <td style="font-weight:500">{f.issue or "—"}{rule_label}</td>
-                  <td style="color:#374151">{f.suggestion or "—"}</td>
-                </tr>"""
-            findings_section = f"""
-              <h3>Findings ({len(findings)})</h3>
-              <table class="findings">
-                <thead>
-                  <tr>
-                    <th>File</th><th>Severity</th><th>Category</th>
-                    <th>Issue</th><th>Suggestion</th>
-                  </tr>
-                </thead>
-                <tbody>{rows}</tbody>
-              </table>"""
-        else:
-            findings_section = "<p style='color:#6b7280;font-style:italic'>No findings detected.</p>"
 
-        # Improvements section
+                file_line = f.file_path or "—"
+                if f.line_number:
+                    file_line += f" &nbsp;·&nbsp; Satır: {f.line_number}"
+
+                rule_row = ""
+                if f.rule_title:
+                    rule_row = f"""
+                    <p class="finding-label">Kural</p>
+                    <p class="finding-value">{f.rule_title}</p>"""
+
+                snippet_row = ""
+                if f.code_snippet:
+                    snippet_row = f"""
+                    <p class="finding-label">Kod</p>
+                    <pre>{f.code_snippet}</pre>"""
+
+                exp_row = ""
+                if f.explanation:
+                    exp_row = f"""
+                    <p class="finding-label">Açıklama</p>
+                    <p class="finding-value">{f.explanation}</p>"""
+
+                cards += f"""
+                <div class="finding-card">
+                  <div class="finding-header">
+                    <strong>Bulgu {idx}</strong>
+                    {_badge(sev.upper())}
+                    {_badge(cat)}
+                  </div>
+                  <div class="finding-body">
+                    <p class="finding-file">{file_line}</p>
+
+                    <p class="finding-label">Sorun</p>
+                    <p class="finding-value">{f.issue or "—"}</p>
+
+                    {exp_row}
+
+                    <p class="finding-label">Öneri</p>
+                    <p class="finding-value">{f.suggestion or "—"}</p>
+
+                    {snippet_row}
+                    {rule_row}
+                  </div>
+                </div>"""
+            findings_section = f"<h3>Bulgular ({len(findings)})</h3>{cards}"
+        else:
+            findings_section = (
+                "<h3>Bulgular</h3>"
+                "<p style='color:#6b7280;font-style:italic'>Herhangi bir bulgu tespit edilmedi.</p>"
+            )
+
+        # ── İyileştirme önerileri ─────────────────────────────────────────────
         improvements_section = ""
         if improvements:
-            imp_rows = ""
-            for imp in improvements[:10]:
-                imp_rows += f"""
-                <tr>
-                  <td style="font-family:monospace;font-size:11px;color:#6b7280">{imp.get('file_path') or '—'}</td>
-                  <td style="font-weight:500;color:#374151">{imp.get('title') or '—'}</td>
-                  <td style="color:#374151">{imp.get('suggestion') or '—'}</td>
-                </tr>"""
-            improvements_section = f"""
-              <h3>Suggested Improvements ({len(improvements)})</h3>
-              <table class="findings">
-                <thead>
-                  <tr><th>File</th><th>Improvement</th><th>Suggestion</th></tr>
-                </thead>
-                <tbody>{imp_rows}</tbody>
-              </table>"""
+            imp_cards = ""
+            for imp in improvements[:15]:
+                imp_file = imp.get("file_path") or ""
+                imp_title = imp.get("title") or "—"
+                imp_desc  = imp.get("description") or ""
+                imp_sug   = imp.get("suggestion") or "—"
+                file_row  = f'<p style="font-family:monospace;font-size:11px;color:#6b7280;margin:0 0 6px">{imp_file}</p>' if imp_file else ""
+                desc_row  = f'<p style="font-size:13px;color:#374151;margin:4px 0">{imp_desc}</p>' if imp_desc else ""
+                imp_cards += f"""
+                <div class="imp-card">
+                  {file_row}
+                  <p style="font-weight:600;font-size:13px;color:#4338ca;margin:0 0 4px">{imp_title}</p>
+                  {desc_row}
+                  <p style="font-size:13px;color:#374151;margin:4px 0"><strong>Öneri:</strong> {imp_sug}</p>
+                </div>"""
+            improvements_section = f"<h3>İyileştirme Önerileri ({len(improvements)})</h3>{imp_cards}"
 
-        # Next-step message
+        # ── Sonraki adım mesajı ───────────────────────────────────────────────
         if passed:
             next_step = """
-              <div style="margin-top:16px;padding:12px 16px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:4px">
+              <div style="margin-top:20px;padding:12px 16px;background:#f0fdf4;
+                          border-left:4px solid #16a34a;border-radius:4px">
                 <p style="margin:0;font-size:13px;color:#166534">
-                  ✅ Review <strong>approved</strong>. Functional test phase will start automatically if tests are configured.
+                  ✅ İnceleme <strong>onaylandı</strong>.
+                  Test yapılandırması mevcutsa fonksiyonel test aşaması otomatik olarak başlayacaktır.
                 </p>
               </div>"""
         else:
             next_step = """
-              <div style="margin-top:16px;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px">
+              <div style="margin-top:20px;padding:12px 16px;background:#fef2f2;
+                          border-left:4px solid #dc2626;border-radius:4px">
                 <p style="margin:0;font-size:13px;color:#991b1b">
-                  ❌ Review <strong>rejected</strong>. Functional tests will <strong>not</strong> run until blocking issues are resolved.
+                  ❌ İnceleme <strong>reddedildi</strong>.
+                  Engelleyici bulgular giderilene kadar fonksiyonel testler <strong>çalıştırılmayacaktır</strong>.
                 </p>
               </div>"""
 
@@ -201,12 +266,13 @@ class EmailService:
     </p>
   </div>
   <div class="body">
+    <h3>Detaylar</h3>
     <table class="meta">{meta}</table>
 
-    <h3>Summary</h3>
-    <p>{review_run.report_summary or "No summary available."}</p>
+    <h3>Özet</h3>
+    <p>{review_run.report_summary or "Özet bilgisi mevcut değil."}</p>
 
-    <h3>Decision Reason</h3>
+    <h3>Karar Gerekçesi</h3>
     <p>{review_run.decision_reason or "—"}</p>
 
     {findings_section}
@@ -220,18 +286,18 @@ class EmailService:
     def build_test_body(self, test_run) -> str:
         result      = test_run.result or "unknown"
         hdr_color   = "#16a34a" if result == "success" else "#dc2626"
-        result_text = "✅ PASSED" if result == "success" else "❌ FAILED"
+        result_text = "✅ BAŞARILI" if result == "success" else "❌ BAŞARISIZ"
 
         meta = "\n".join(f"""
           <tr>
             <td>{label}</td>
             <td style="color:#111827;font-weight:500">{value}</td>
           </tr>""" for label, value in [
-            ("Task",         test_run.task_key   or "—"),
-            ("Sprint",       test_run.sprint_name or "—"),
-            ("Total Tests",  str(test_run.total_tests)),
-            ("Passed",       f'<span style="color:#16a34a;font-weight:700">{test_run.passed_tests}</span>'),
-            ("Failed",       f'<span style="color:#dc2626;font-weight:700">{test_run.failed_tests}</span>'),
+            ("Task",               test_run.task_key    or "—"),
+            ("Sprint",             test_run.sprint_name or "—"),
+            ("Toplam Test",        str(test_run.total_tests)),
+            ("Başarılı",           f'<span style="color:#16a34a;font-weight:700">{test_run.passed_tests}</span>'),
+            ("Başarısız",          f'<span style="color:#dc2626;font-weight:700">{test_run.failed_tests}</span>'),
         ])
 
         return f"""<!DOCTYPE html>
@@ -240,16 +306,17 @@ class EmailService:
 <body>
 <div class="wrap">
   <div class="hdr" style="background:{hdr_color}">
-    <h2 style="color:#fff">Functional Tests — {result_text}</h2>
+    <h2 style="color:#fff">Fonksiyonel Testler — {result_text}</h2>
     <p style="color:rgba(255,255,255,.85);margin:0;font-size:13px">
-      {test_run.task_key or "N/A"} · {test_run.sprint_name or "N/A"}
+      {test_run.task_key or "N/A"} &middot; {test_run.sprint_name or "N/A"}
     </p>
   </div>
   <div class="body">
+    <h3>Detaylar</h3>
     <table class="meta">{meta}</table>
 
-    <h3>Summary</h3>
-    <p>{test_run.report_summary or "No summary available."}</p>
+    <h3>Özet</h3>
+    <p>{test_run.report_summary or "Özet bilgisi mevcut değil."}</p>
   </div>
 </div>
 </body></html>"""

@@ -101,6 +101,18 @@ Return ONLY valid JSON — no markdown fences, no explanation outside the JSON.
 - risk_level = "high"     if any high finding exists (and no critical)
 - risk_level = "medium"   if only warning findings exist
 - risk_level = "low"      if only info findings or no findings
+
+## Language Requirement  (IMPORTANT)
+Write ALL explanatory text in Turkish.
+This includes: summary, decision_reason, issue, explanation, suggestion, description, title fields.
+Keep technical software terms in English as-is:
+  API, endpoint, controller, service, repository, DTO, webhook, commit, branch, merge,
+  pull request, dependency injection, SQL injection, XSS, SSRF, JWT, token, HTTP, REST,
+  null, undefined, try/catch, async/await, middleware, decorator, interface, class, method.
+Example good output:
+  issue: "AddCar endpoint'i basarili kayit sonrasinda HTTP 200 donmektedir."
+  explanation: "REST API tasariminda yeni kaynak olusturuldugunda HTTP 201 Created donulmesi daha dogrudur."
+  suggestion: "Ok(...) yerine CreatedAtAction(...) veya StatusCode(201) kullanilabilir."
 """
 
 
