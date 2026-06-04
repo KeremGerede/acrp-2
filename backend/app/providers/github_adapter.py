@@ -1,10 +1,13 @@
 import re
+import logging
 from typing import Optional, List, Dict, Any
 import requests
 from app.providers.base import ProviderAdapter
 from app.providers.normalized_events import NormalizedSCMEvent, EventType
 from app.core.security import verify_hmac_sha256
 from app.core.config import settings
+
+log = logging.getLogger(__name__)
 
 
 class GitHubAdapter(ProviderAdapter):
@@ -110,35 +113,54 @@ class GitHubAdapter(ProviderAdapter):
 
         return None
 
-    def fetch_changed_files(
-        self, repo_full_name: str, before_sha: str, after_sha: str, token: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        import logging
-        log = logging.getLogger(__name__)
-
+    def _auth_headers(self, token: Optional[str] = None) -> dict:
         use_token = token or settings.GITHUB_TOKEN
         headers = {"Accept": "application/vnd.github+json"}
         if use_token:
             headers["Authorization"] = f"Bearer {use_token}"
         else:
-            log.warning("No GitHub token — API requests may be rate-limited or fail on private repos")
+            log.warning("No GitHub token — API calls may be rate-limited or fail on private repos")
+        return headers
 
+    def fetch_changed_files(
+        self, repo_full_name: str, before_sha: str, after_sha: str, token: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        headers = self._auth_headers(token)
         url = f"{self.BASE_URL}/repos/{repo_full_name}/compare/{before_sha}...{after_sha}"
         log.info(f"GitHub compare: GET {url}")
 
         try:
             response = requests.get(url, headers=headers, timeout=30)
             if not response.ok:
-                log.error(
-                    f"GitHub compare API error {response.status_code}: {response.text[:300]}"
-                )
+                log.error(f"GitHub compare API error {response.status_code}: {response.text[:300]}")
                 return []
             data = response.json()
             files = data.get("files", [])
             log.info(f"GitHub compare returned {len(files)} file(s)")
             return files
-        except Exception as e:
-            log.error(f"GitHub compare request failed: {e}")
+        except Exception as exc:
+            log.error(f"GitHub compare request failed: {exc}")
+            return []
+
+    def fetch_commit_files(
+        self, repo_full_name: str, commit_sha: str, token: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch files changed in a specific commit (reliable for merge commits)."""
+        headers = self._auth_headers(token)
+        url = f"{self.BASE_URL}/repos/{repo_full_name}/commits/{commit_sha}"
+        log.info(f"GitHub commit fetch: GET {url}")
+
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if not response.ok:
+                log.error(f"GitHub commit API error {response.status_code}: {response.text[:300]}")
+                return []
+            data = response.json()
+            files = data.get("files", [])
+            log.info(f"GitHub commit returned {len(files)} file(s)")
+            return files
+        except Exception as exc:
+            log.error(f"GitHub commit request failed: {exc}")
             return []
 
     def sync_repositories(self, token: Optional[str] = None) -> List[Dict[str, Any]]:
