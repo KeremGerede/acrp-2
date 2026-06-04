@@ -31,7 +31,12 @@ class GitHubAdapter(ProviderAdapter):
             source_branch = pr.get("head", {}).get("ref")
             target_branch = pr.get("base", {}).get("ref")
             actor = pr.get("merged_by") or pr.get("user") or {}
-            commit_sha = pr.get("merge_commit_sha")
+            merge_commit_sha = pr.get("merge_commit_sha")
+
+            # Use base.sha…head.sha for the compare API — this gives the exact
+            # diff of the PR (all files the source branch changed relative to target).
+            base_sha = pr.get("base", {}).get("sha")   # target branch HEAD before merge
+            head_sha = pr.get("head", {}).get("sha")   # source branch HEAD
 
             return NormalizedSCMEvent(
                 provider="github",
@@ -44,9 +49,9 @@ class GitHubAdapter(ProviderAdapter):
                 source_branch=source_branch,
                 target_branch=target_branch,
                 branch=target_branch,
-                before_sha=None,
-                after_sha=commit_sha,
-                commit_sha=commit_sha,
+                before_sha=base_sha,
+                after_sha=head_sha,
+                commit_sha=merge_commit_sha,
                 commit_messages=[pr.get("title", "")],
                 is_merge_event=True,
                 raw_payload=payload,
@@ -108,18 +113,32 @@ class GitHubAdapter(ProviderAdapter):
     def fetch_changed_files(
         self, repo_full_name: str, before_sha: str, after_sha: str, token: Optional[str] = None
     ) -> List[Dict[str, Any]]:
+        import logging
+        log = logging.getLogger(__name__)
+
         use_token = token or settings.GITHUB_TOKEN
         headers = {"Accept": "application/vnd.github+json"}
         if use_token:
             headers["Authorization"] = f"Bearer {use_token}"
+        else:
+            log.warning("No GitHub token — API requests may be rate-limited or fail on private repos")
 
         url = f"{self.BASE_URL}/repos/{repo_full_name}/compare/{before_sha}...{after_sha}"
+        log.info(f"GitHub compare: GET {url}")
+
         try:
             response = requests.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
+            if not response.ok:
+                log.error(
+                    f"GitHub compare API error {response.status_code}: {response.text[:300]}"
+                )
+                return []
             data = response.json()
-            return data.get("files", [])
+            files = data.get("files", [])
+            log.info(f"GitHub compare returned {len(files)} file(s)")
+            return files
         except Exception as e:
+            log.error(f"GitHub compare request failed: {e}")
             return []
 
     def sync_repositories(self, token: Optional[str] = None) -> List[Dict[str, Any]]:
