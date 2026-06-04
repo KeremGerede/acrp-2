@@ -20,6 +20,7 @@ from app.services.email_service import email_service
 from app.services.functional_test_runner_service import run_tests_for_review
 from app.tools.changed_files_fetcher_tool import fetch_changed_files
 from app.agents.reviewer_agent import run_review
+from app.services.pdf_report_service import generate_review_pdf
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
@@ -61,21 +62,33 @@ def _process_task_merge(
         actor_username = event_log.actor_username or ""
         actor_email = event_log.actor_email
 
-        # Fetch changed files
+        # Fetch changed files (requires both SHAs)
         changed_files = []
         if event_log.before_sha and event_log.after_sha:
             try:
+                # Retrieve the GitHub token from the integration's credential if stored,
+                # otherwise fall back to the global GITHUB_TOKEN in settings.
+                from app.models.integration import PlatformCredential
+                cred = db.query(PlatformCredential).filter_by(
+                    integration_id=integration_id
+                ).first()
+                token = (cred.token_encrypted_or_placeholder if cred else None) or None
+
                 changed_files = fetch_changed_files(
                     provider=event_log.provider,
                     repo_full_name=integration.repository_full_name or "",
                     before_sha=event_log.before_sha,
                     after_sha=event_log.after_sha,
+                    token=token,
                 )
+                logger.info(f"Fetched {len(changed_files)} changed file(s) for review run")
             except Exception as e:
                 logger.warning(f"Could not fetch changed files: {e}")
-        elif event_log.after_sha:
-            # For PR merges we only have after_sha; skip diff fetch but continue
-            pass
+        else:
+            logger.warning(
+                f"Skipping diff fetch — before_sha={event_log.before_sha!r} "
+                f"after_sha={event_log.after_sha!r}"
+            )
 
         # Create MergeReviewRun
         review_run = MergeReviewRun(
@@ -163,7 +176,18 @@ def _process_task_merge(
         )
         review_run_refreshed = db.query(MergeReviewRun).filter_by(id=review_run.id).first()
         body = email_service.build_review_body(review_run_refreshed, findings_objs)
-        ok = email_service.send(subject, body, recipients)
+
+        pdf_bytes = None
+        try:
+            pdf_bytes = generate_review_pdf(review_run_refreshed, findings_objs)
+        except Exception as e:
+            logger.warning(f"PDF generation failed, sending email without attachment: {e}")
+
+        safe_task = (task_key or "report").replace("/", "-").replace(" ", "_")
+        safe_sprint = (sprint_name or "").replace("/", "-").replace(" ", "_")
+        pdf_filename = f"review_{safe_task}_{safe_sprint}.pdf".strip("_")
+
+        ok = email_service.send(subject, body, recipients, pdf_bytes=pdf_bytes, pdf_filename=pdf_filename)
         if ok:
             mark_sent(db, notif.id)
         else:
