@@ -10,6 +10,50 @@ from app.core.config import settings
 log = logging.getLogger(__name__)
 
 
+def normalize_repository_full_name(repo: str) -> str:
+    """
+    Normalize any GitHub repository identifier into 'owner/repo' form.
+
+    Accepts and converts:
+      https://github.com/Owner/Repo        → Owner/Repo
+      https://github.com/Owner/Repo.git    → Owner/Repo
+      git@github.com:Owner/Repo.git        → Owner/Repo
+      Owner/Repo                           → Owner/Repo
+
+    Returns the original value unchanged if it cannot be parsed.
+    """
+    if not repo:
+        return repo
+    original = repo
+    r = repo.strip()
+
+    if r.startswith("git@"):
+        # git@github.com:Owner/Repo.git → Owner/Repo.git
+        if ":" in r:
+            r = r.split(":", 1)[1]
+    else:
+        for scheme in ("https://", "http://", "ssh://", "git://"):
+            if r.startswith(scheme):
+                r = r[len(scheme):]
+                # drop the host segment (github.com/...)
+                if "/" in r:
+                    r = r.split("/", 1)[1]
+                break
+
+    if r.endswith(".git"):
+        r = r[:-4]
+    r = r.strip("/")
+
+    # Keep only the first two path segments (owner/repo)
+    parts = [p for p in r.split("/") if p]
+    if len(parts) >= 2:
+        r = f"{parts[0]}/{parts[1]}"
+
+    if r != original:
+        log.info(f"[GitHubAdapter] normalized_repo={r} original_repo={original}")
+    return r
+
+
 class GitHubAdapter(ProviderAdapter):
 
     BASE_URL = "https://api.github.com"
@@ -129,8 +173,9 @@ class GitHubAdapter(ProviderAdapter):
         self, repo_full_name: str, before_sha: str, after_sha: str, token: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         headers = self._auth_headers(token)
-        url = f"{self.BASE_URL}/repos/{repo_full_name}/compare/{before_sha}...{after_sha}"
-        log.info(f"GitHub compare: GET {url}")
+        repo = normalize_repository_full_name(repo_full_name)
+        url = f"{self.BASE_URL}/repos/{repo}/compare/{before_sha}...{after_sha}"
+        log.info(f"[GitHubAdapter] GET /repos/{repo}/compare/{before_sha}...{after_sha}")
 
         try:
             response = requests.get(url, headers=headers, timeout=30)
@@ -150,8 +195,9 @@ class GitHubAdapter(ProviderAdapter):
     ) -> List[Dict[str, Any]]:
         """Fetch files changed in a specific commit (reliable for merge commits)."""
         headers = self._auth_headers(token)
-        url = f"{self.BASE_URL}/repos/{repo_full_name}/commits/{commit_sha}"
-        log.info(f"GitHub commit fetch: GET {url}")
+        repo = normalize_repository_full_name(repo_full_name)
+        url = f"{self.BASE_URL}/repos/{repo}/commits/{commit_sha}"
+        log.info(f"[GitHubAdapter] GET /repos/{repo}/commits/{commit_sha}")
 
         try:
             response = requests.get(url, headers=headers, timeout=30)

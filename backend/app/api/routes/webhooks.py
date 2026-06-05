@@ -31,6 +31,16 @@ from app.agents.reviewer_agent import run_review
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
+# Branch prefixes that identify RevertAgent's own revert PRs. Events on these
+# branches must never be treated as normal task merges (would review/revert
+# our own revert).
+_REVERT_BRANCH_PREFIXES = ("revert-", "revert/", "acrp-revert-")
+
+
+def _is_revert_branch(branch: Optional[str]) -> bool:
+    b = (branch or "").lower()
+    return any(b.startswith(p) for p in _REVERT_BRANCH_PREFIXES)
+
 
 def _collect_recipients(integration, actor_email: Optional[str]) -> List[str]:
     recipients = []
@@ -412,6 +422,17 @@ async def handle_webhook(
     event_type = detect_event_type(normalized, integration)
     normalized.event_type = event_type
 
+    # ── Skip RevertAgent's own revert branches ────────────────────────────────
+    # When RevertAgent creates/merges a revert PR, GitHub emits pull_request and
+    # push events on a 'revert-*' branch. Never review or revert those.
+    if _is_revert_branch(normalized.source_branch):
+        logger.info(
+            f"[Webhook] system_revert_event_skipped — source_branch="
+            f"{normalized.source_branch} is a revert branch; "
+            "not running CodeReviewAgent/RevertAgent."
+        )
+        return {"status": "ignored", "reason": "system_revert_event_skipped"}
+
     sprint_name, task_key = parse_sprint_and_task(
         normalized.source_branch or "",
         normalized.target_branch or normalized.branch or "",
@@ -444,6 +465,31 @@ async def handle_webhook(
     db.refresh(event_log)
 
     if event_type == EventType.task_to_sprint_merge:
+        # ── Duplicate detection ───────────────────────────────────────────────
+        # The same merge produces both a pull_request.closed event and a push
+        # event that share the same merge commit SHA. Only the first-arriving
+        # event should run the pipeline; later ones must be skipped so we don't
+        # double-review or send a second (REVERT REQUIRED) email.
+        if normalized.commit_sha:
+            prior = db.query(SCMEventLog).filter(
+                SCMEventLog.integration_id == integration_id,
+                SCMEventLog.commit_sha == normalized.commit_sha,
+                SCMEventLog.event_type == EventType.task_to_sprint_merge.value,
+                SCMEventLog.id < event_log.id,
+            ).first()
+            if prior:
+                logger.info(
+                    "[Webhook] Duplicate merge event detected from "
+                    f"{event_type.value} event (commit={normalized.commit_sha}, "
+                    f"prior_event_id={prior.id}). Skipping review/revert because an "
+                    "earlier event already processed this merge."
+                )
+                return {
+                    "status": "duplicate",
+                    "event_id": event_log.id,
+                    "duplicate_of": prior.id,
+                }
+
         background_tasks.add_task(_process_task_merge, event_log.id, integration_id)
         return {"status": "accepted", "event_id": event_log.id, "event_type": event_type.value}
 

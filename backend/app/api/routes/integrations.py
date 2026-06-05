@@ -6,16 +6,21 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.integration import ProjectIntegration
 from app.schemas.integration import IntegrationCreate, IntegrationUpdate, IntegrationResponse
+from app.providers.github_adapter import normalize_repository_full_name
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 
 def _derive_fields(payload: dict) -> dict:
     """
-    Auto-derive repository_owner, repository_name, and repository_url
-    from repository_full_name when they are not explicitly provided.
+    Normalize repository_full_name to 'owner/repo' form, then auto-derive
+    repository_owner, repository_name, and repository_url from it when they
+    are not explicitly provided. Accepts full GitHub URLs and .git suffixes.
     """
     full_name = payload.get("repository_full_name") or ""
+    if full_name:
+        full_name = normalize_repository_full_name(full_name)
+        payload["repository_full_name"] = full_name
 
     if full_name and "/" in full_name:
         owner, name = full_name.split("/", 1)

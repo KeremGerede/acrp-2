@@ -28,6 +28,8 @@ _MIGRATIONS = [
      "ALTER TABLE merge_review_runs ADD COLUMN revert_error_message TEXT"),
     ("merge_review_runs", "reverted_at",
      "ALTER TABLE merge_review_runs ADD COLUMN reverted_at DATETIME"),
+    ("merge_review_runs", "revert_merge_commit_sha",
+     "ALTER TABLE merge_review_runs ADD COLUMN revert_merge_commit_sha VARCHAR(100)"),
     ("merge_review_runs", "pull_request_number",
      "ALTER TABLE merge_review_runs ADD COLUMN pull_request_number INTEGER"),
     ("merge_review_runs", "pull_request_url",

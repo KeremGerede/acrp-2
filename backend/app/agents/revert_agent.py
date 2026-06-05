@@ -190,6 +190,7 @@ def run_revert(
     revert_pr_number = pr_result["pr_number"]
     revert_pr_url    = pr_result["pr_url"]
     revert_branch    = pr_result["branch_name"]
+    base_branch      = pr_result.get("base_branch")
 
     review_run.revert_status      = "revert_pr_created"
     review_run.revert_pr_url      = revert_pr_url
@@ -198,55 +199,75 @@ def run_revert(
 
     _step(db, tenant_id, integration_id, event_log_id, review_run.id,
           "revert_pr_created", "completed",
-          output_summary=f"revert_pr_url={revert_pr_url} branch={revert_branch}")
-    logger.info(f"[RevertAgent] Revert PR created: {revert_pr_url}")
+          output_summary=f"revert_pr_url={revert_pr_url} number={revert_pr_number} "
+                         f"head={revert_branch} base={base_branch}")
+    logger.info(
+        f"[RevertAgent] Revert PR created: #{revert_pr_number} {revert_pr_url} "
+        f"(head={revert_branch} base={base_branch})"
+    )
 
-    # ── Validate revert PR base branch ────────────────────────────────────────
-    expected_base = review_run.target_branch or ""
-    actual_base = revert_service.get_revert_pr_base_branch(repo, revert_pr_number, token)
-    if actual_base is not None and actual_base != expected_base:
-        error_msg = (
-            f"Revert PR #{revert_pr_number} targets '{actual_base}' "
-            f"but the original merge targeted '{expected_base}'. "
-            "Auto-merge aborted to prevent merging into the wrong branch."
+    # ── Stop here if mode is create_revert_pr only ────────────────────────────
+    if mode != "create_and_merge_revert_pr":
+        logger.info(
+            "[RevertAgent] AUTO_REVERT_MODE=create_revert_pr — "
+            "leaving revert PR open for manual merge."
         )
-        logger.error(f"[RevertAgent] Base branch mismatch: {error_msg}")
+        return {"status": "revert_pr_created", "revert_pr_url": revert_pr_url, "error": None}
+
+    # ── Validate revert PR base branch before auto-merge ──────────────────────
+    expected_base = review_run.target_branch or ""
+    # Prefer the base branch returned by the GraphQL mutation; fall back to REST.
+    if not base_branch:
+        base_branch = revert_service.get_revert_pr_base_branch(repo, revert_pr_number, token)
+
+    if base_branch and expected_base and base_branch != expected_base:
+        error_msg = "Revert PR base branch does not match original failed merge target branch."
+        detail = f"{error_msg} revert_base={base_branch} expected={expected_base}"
+        logger.error(f"[RevertAgent] {detail}")
         _mark_failed(db, review_run, "revert_failed", error_msg)
         _step(db, tenant_id, integration_id, event_log_id, review_run.id,
-              "revert_pr_base_branch_validated", "failed", output_summary=error_msg)
+              "revert_pr_base_branch_validated", "failed", output_summary=detail)
         return {"status": "revert_failed", "revert_pr_url": revert_pr_url, "error": error_msg}
 
     _step(db, tenant_id, integration_id, event_log_id, review_run.id,
           "revert_pr_base_branch_validated", "completed",
-          output_summary=f"base={actual_base or 'unknown'} expected={expected_base}")
-
-    # ── Stop if mode is create_revert_pr only ─────────────────────────────────
-    if mode != "create_and_merge_revert_pr":
-        return {"status": "revert_pr_created", "revert_pr_url": revert_pr_url, "error": None}
+          output_summary=f"base={base_branch or 'unknown'} expected={expected_base}")
 
     # ── Auto-merge revert PR ───────────────────────────────────────────────────
     review_run.revert_status = "revert_auto_merge_started"
     db.commit()
 
+    logger.info(f"[RevertAgent] AUTO_REVERT_MODE={mode}")
+    logger.info(f"[RevertAgent] Starting auto-merge for revert PR #{revert_pr_number}")
     _step(db, tenant_id, integration_id, event_log_id, review_run.id,
           "revert_auto_merge_started", "running",
-          input_summary=f"revert_pr_number={revert_pr_number}")
+          input_summary=f"revert_pr_number={revert_pr_number} repo={repo}")
 
     merge_result = revert_service.merge_pr_rest(
         repo,
         revert_pr_number,
         token,
-        commit_title=f"Revert: {task_key} — auto-merged by RevertAgent",
+        commit_title=f"Auto revert failed review for {task_key}",
+        commit_message=(
+            "Automatically merged by RevertAgent because CodeReviewAgent "
+            "rejected the original merge."
+        ),
     )
 
     if merge_result["ok"]:
-        review_run.revert_status = "reverted"
-        review_run.reverted_at   = datetime.now(timezone.utc).replace(tzinfo=None)
+        merge_commit_sha = merge_result.get("merge_commit_sha")
+        review_run.revert_status            = "reverted"
+        review_run.reverted_at              = datetime.now(timezone.utc).replace(tzinfo=None)
+        review_run.revert_merge_commit_sha  = merge_commit_sha
         db.commit()
         _step(db, tenant_id, integration_id, event_log_id, review_run.id,
               "revert_auto_merge_completed", "completed",
-              output_summary=f"Revert PR #{revert_pr_number} auto-merged successfully.")
-        logger.info(f"[RevertAgent] Revert PR #{revert_pr_number} auto-merged. ✓")
+              output_summary=f"Revert PR #{revert_pr_number} merged. "
+                             f"merge_commit_sha={merge_commit_sha}")
+        logger.info(
+            f"[RevertAgent] Revert PR #{revert_pr_number} auto-merged. "
+            f"merge_commit_sha={merge_commit_sha} ✓"
+        )
         return {"status": "reverted", "revert_pr_url": revert_pr_url, "error": None}
 
     # Auto-merge failed

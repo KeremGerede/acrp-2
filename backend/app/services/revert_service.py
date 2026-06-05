@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.merge_review import MergeReviewRun
 from app.core.config import settings
+from app.providers.github_adapter import normalize_repository_full_name
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ mutation RevertPullRequest($pullRequestId: ID!, $title: String, $body: String) {
       number
       url
       headRefName
+      baseRefName
     }
   }
 }
@@ -92,7 +94,9 @@ class RevertService:
         Returns node_id string or None.
         """
         headers = self._auth_headers(token)
-        url = f"{_GITHUB_API}/repos/{repo_full_name}/pulls/{pr_number}"
+        repo = normalize_repository_full_name(repo_full_name)
+        url = f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}"
+        logger.info(f"[GitHubAdapter] GET /repos/{repo}/pulls/{pr_number}")
         try:
             resp = requests.get(url, headers=headers, timeout=20)
             if resp.ok:
@@ -104,8 +108,8 @@ class RevertService:
                 logger.warning(f"[RevertService] PR #{pr_number} found but node_id missing in response")
             else:
                 logger.warning(
-                    f"[RevertService] GET pulls/{pr_number} returned {resp.status_code}: "
-                    f"{resp.text[:200]}"
+                    f"[GitHubAdapter] GET /repos/{repo}/pulls/{pr_number} "
+                    f"response status={resp.status_code} body={resp.text[:300]}"
                 )
         except Exception as exc:
             logger.warning(f"[RevertService] find_pr_node_id_by_number failed: {exc}")
@@ -125,7 +129,9 @@ class RevertService:
         Returns (pr_node_id, pr_number) or (None, None).
         """
         headers = self._auth_headers(token)
-        url = f"{_GITHUB_API}/repos/{repo_full_name}/commits/{commit_sha}/pulls"
+        repo = normalize_repository_full_name(repo_full_name)
+        url = f"{_GITHUB_API}/repos/{repo}/commits/{commit_sha}/pulls"
+        logger.info(f"[GitHubAdapter] GET /repos/{repo}/commits/{commit_sha}/pulls")
         try:
             resp = requests.get(url, headers=headers, timeout=20)
             if resp.ok:
@@ -139,8 +145,8 @@ class RevertService:
                 logger.info(f"[RevertService] No PRs associated with commit {commit_sha}")
             else:
                 logger.warning(
-                    f"[RevertService] commit→pulls lookup returned {resp.status_code} "
-                    f"for {commit_sha}: {resp.text[:200]}"
+                    f"[GitHubAdapter] GET /repos/{repo}/commits/{commit_sha}/pulls "
+                    f"response status={resp.status_code} body={resp.text[:300]}"
                 )
         except Exception as exc:
             logger.warning(f"[RevertService] find_pr_by_commit failed: {exc}")
@@ -160,14 +166,16 @@ class RevertService:
         Returns the base branch ref string, or None on failure.
         """
         headers = self._auth_headers(token)
-        url = f"{_GITHUB_API}/repos/{repo_full_name}/pulls/{pr_number}"
+        repo = normalize_repository_full_name(repo_full_name)
+        url = f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}"
+        logger.info(f"[GitHubAdapter] GET /repos/{repo}/pulls/{pr_number} (base branch)")
         try:
             resp = requests.get(url, headers=headers, timeout=20)
             if resp.ok:
                 return resp.json().get("base", {}).get("ref")
             logger.warning(
-                f"[RevertService] GET pulls/{pr_number} returned {resp.status_code} "
-                f"while fetching base branch: {resp.text[:200]}"
+                f"[GitHubAdapter] GET /repos/{repo}/pulls/{pr_number} (base branch) "
+                f"response status={resp.status_code} body={resp.text[:300]}"
             )
         except Exception as exc:
             logger.warning(f"[RevertService] get_revert_pr_base_branch failed: {exc}")
@@ -234,6 +242,7 @@ class RevertService:
                 "pr_number": revert_pr.get("number"),
                 "pr_url": revert_pr.get("url"),
                 "branch_name": revert_pr.get("headRefName"),
+                "base_branch": revert_pr.get("baseRefName"),
                 "error": None,
             }
         except Exception as exc:
@@ -247,34 +256,86 @@ class RevertService:
         pr_number: int,
         token: Optional[str],
         commit_title: str = "",
+        commit_message: str = "",
     ) -> dict:
         """
         Attempt to merge a PR via GitHub REST API.
         PUT /repos/{owner}/{repo}/pulls/{number}/merge
 
         Returns:
-          {"ok": True}
-          {"ok": False, "conflict": bool, "permission_error": bool, "error": str}
+          {"ok": True,  "merge_commit_sha": Optional[str], ...}
+          {"ok": False, "conflict": bool, "permission_error": bool, "error": str, "merge_commit_sha": None}
+
+        Status mapping on failure:
+          403 → permission / branch protection problem
+          404 → wrong repo, wrong PR number, or inaccessible repo
+          405 → PR is not mergeable or merge method not allowed
+          409 → merge conflict
         """
         headers = self._auth_headers(token)
-        url = f"{_GITHUB_API}/repos/{repo_full_name}/pulls/{pr_number}/merge"
-        payload = {
-            "merge_method": "merge",
-            "commit_title": commit_title or f"Revert PR #{pr_number} — auto-merged by RevertAgent",
-        }
+        repo = normalize_repository_full_name(repo_full_name)
+        url = f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}/merge"
+        payload = {"merge_method": "merge"}
+        if commit_title:
+            payload["commit_title"] = commit_title
+        if commit_message:
+            payload["commit_message"] = commit_message
+
+        logger.info(f"[GitHubAdapter] PUT /repos/{repo}/pulls/{pr_number}/merge")
         try:
-            resp = requests.put(url, json=payload, headers=headers, timeout=20)
-            if resp.status_code in (200, 201):
-                return {"ok": True, "conflict": False, "permission_error": False, "error": None}
+            resp = requests.put(url, json=payload, headers=headers, timeout=30)
+            body = resp.text[:500] if resp.content else ""
+            logger.info(
+                f"[GitHubAdapter] merge PR #{pr_number} response status={resp.status_code} body={body}"
+            )
             data = resp.json() if resp.content else {}
-            msg = data.get("message", f"HTTP {resp.status_code}")
-            conflict = resp.status_code in (405, 409)
-            perm = resp.status_code == 403 or _is_permission_error(msg)
+
+            # GitHub returns 200 with {"merged": true, "sha": "..."} on success.
+            if resp.status_code in (200, 201) and data.get("merged") is True:
+                return {
+                    "ok": True,
+                    "conflict": False,
+                    "permission_error": False,
+                    "error": None,
+                    "merge_commit_sha": data.get("sha"),
+                }
+
+            code = resp.status_code
+            gh_msg = data.get("message", "") or body
+            conflict = code == 409
+            perm = code == 403 or _is_permission_error(gh_msg)
+
+            if code == 403:
+                reason = "permission / branch protection problem"
+            elif code == 404:
+                reason = "wrong repo, wrong PR number, or inaccessible repo"
+            elif code == 405:
+                reason = "PR is not mergeable or merge method not allowed"
+            elif code == 409:
+                reason = "merge conflict"
+            else:
+                reason = "merge failed"
+
             if perm:
-                msg = _PERMISSION_ERROR_DETAIL
-            return {"ok": False, "conflict": conflict, "permission_error": perm, "error": msg}
+                error = f"{_PERMISSION_ERROR_DETAIL} (status={code}, {reason}): {gh_msg}"
+            else:
+                error = f"GitHub merge failed (status={code}, {reason}): {gh_msg}"
+
+            return {
+                "ok": False,
+                "conflict": conflict,
+                "permission_error": perm,
+                "error": error,
+                "merge_commit_sha": None,
+            }
         except Exception as exc:
-            return {"ok": False, "conflict": False, "permission_error": False, "error": str(exc)}
+            return {
+                "ok": False,
+                "conflict": False,
+                "permission_error": False,
+                "error": str(exc),
+                "merge_commit_sha": None,
+            }
 
     # ── Safe fallback ─────────────────────────────────────────────────────────
 

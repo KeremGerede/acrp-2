@@ -35,6 +35,7 @@ class MergeReviewRun(Base):
     revert_pr_url = Column(String(1000))
     revert_branch_name = Column(String(500))
     revert_error_message = Column(Text)
+    revert_merge_commit_sha = Column(String(100))
     reverted_at = Column(DateTime)
     started_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
