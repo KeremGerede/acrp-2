@@ -347,16 +347,36 @@ class EmailService:
                           border-left:4px solid #16a34a;border-radius:4px">
                 <p style="margin:0;font-size:13px;color:#166534">
                   ✅ İnceleme <strong>onaylandı</strong>.
+                  Gate Durumu: <strong>PASSED</strong>.
                   Test yapılandırması mevcutsa fonksiyonel test aşaması otomatik olarak başlayacaktır.
                 </p>
               </div>"""
         else:
-            next_step = """
-              <div style="margin-top:20px;padding:12px 16px;background:#fef2f2;
+            revert_pr_url = getattr(review_run, "revert_pr_url", None)
+            revert_status_val = getattr(review_run, "revert_status", "required")
+            revert_status_display = "REVERT PR OLUŞTURULDU" if revert_status_val == "revert_pr_created" else "GEREKLİ"
+            revert_pr_row = (
+                f'<tr><td style="color:#6b7280;padding:3px 0">Revert PR:</td>'
+                f'<td><a href="{revert_pr_url}" style="color:#dc2626">{revert_pr_url}</a></td></tr>'
+            ) if revert_pr_url else ""
+            next_step = f"""
+              <div style="margin-top:20px;padding:14px 16px;background:#fef2f2;
                           border-left:4px solid #dc2626;border-radius:4px">
-                <p style="margin:0;font-size:13px;color:#991b1b">
-                  ❌ İnceleme <strong>reddedildi</strong>.
-                  Engelleyici bulgular giderilene kadar fonksiyonel testler <strong>çalıştırılmayacaktır</strong>.
+                <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:#7f1d1d">
+                  🚫 MERGE BLOCKED — İnceleme reddedildi, pipeline durduruldu.
+                </p>
+                <table style="font-size:12px;width:100%;border-collapse:collapse">
+                  <tr><td style="color:#6b7280;width:180px;padding:3px 0">Karar:</td><td style="color:#991b1b;font-weight:600">❌ REDDEDİLDİ</td></tr>
+                  <tr><td style="color:#6b7280;padding:3px 0">Gate Durumu:</td><td style="color:#dc2626;font-weight:600">🚫 ENGELLENDİ</td></tr>
+                  <tr><td style="color:#6b7280;padding:3px 0">Fonksiyonel Test:</td><td style="color:#dc2626;font-weight:600">⏭ ATLANILDI</td></tr>
+                  <tr><td style="color:#6b7280;padding:3px 0">Promosyon:</td><td style="color:#dc2626;font-weight:600">🚫 ENGELLENDİ</td></tr>
+                  <tr><td style="color:#6b7280;padding:3px 0">Revert Durumu:</td><td style="color:#f97316;font-weight:600">⚠ {revert_status_display}</td></tr>
+                  {revert_pr_row}
+                </table>
+                <p style="margin:12px 0 0;font-size:13px;color:#991b1b">
+                  Bu merge review'den geçemediği için functional test aşaması çalıştırılmadı ve
+                  DEV/TEST promotion süreci engellendi. Lütfen bu branch'ı revert edin veya
+                  ilgili sorunları gidererek yeniden merge isteği oluşturun.
                 </p>
               </div>"""
 

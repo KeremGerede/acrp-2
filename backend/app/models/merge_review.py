@@ -27,6 +27,11 @@ class MergeReviewRun(Base):
     blocking_findings_count = Column(Integer, default=0)
     report_summary = Column(Text)
     raw_agent_response_json = Column(Text)
+    gate_status = Column(String(50), default="pending")    # pending, passed, blocked
+    gate_reason = Column(Text)
+    revert_status = Column(String(50), default="not_required")  # not_required, required, revert_pr_created, reverted, revert_failed
+    revert_pr_url = Column(String(1000))
+    revert_branch_name = Column(String(500))
     started_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)

@@ -14,6 +14,16 @@ _MIGRATIONS = [
      "ALTER TABLE merge_review_runs ADD COLUMN raw_agent_response_json TEXT"),
     ("merge_review_runs", "started_at",
      "ALTER TABLE merge_review_runs ADD COLUMN started_at DATETIME"),
+    ("merge_review_runs", "gate_status",
+     "ALTER TABLE merge_review_runs ADD COLUMN gate_status VARCHAR(50) DEFAULT 'pending'"),
+    ("merge_review_runs", "gate_reason",
+     "ALTER TABLE merge_review_runs ADD COLUMN gate_reason TEXT"),
+    ("merge_review_runs", "revert_status",
+     "ALTER TABLE merge_review_runs ADD COLUMN revert_status VARCHAR(50) DEFAULT 'not_required'"),
+    ("merge_review_runs", "revert_pr_url",
+     "ALTER TABLE merge_review_runs ADD COLUMN revert_pr_url VARCHAR(1000)"),
+    ("merge_review_runs", "revert_branch_name",
+     "ALTER TABLE merge_review_runs ADD COLUMN revert_branch_name VARCHAR(500)"),
 ]
 
 

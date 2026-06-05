@@ -21,6 +21,10 @@ from app.services.user_stats_service import increment
 from app.services.email_service import email_service
 from app.services.functional_test_runner_service import run_tests_for_review
 from app.services.pdf_report_service import generate_review_pdf
+from app.services.review_gate_service import review_gate_service
+from app.services.revert_service import revert_service
+from app.services.agent_step_service import log_step
+from app.models.promotion import EnvironmentPromotionLog
 from app.tools.changed_files_fetcher_tool import fetch_changed_files
 from app.agents.reviewer_agent import run_review
 
@@ -188,6 +192,82 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
             raw_agent_response_json=raw_json,
         )
 
+        # ── Review gate evaluation ───────────────────────────────────────────
+        gate_result = review_gate_service.evaluate(report["result"])
+        review_gate_service.apply_to_run(db, review_run, gate_result)
+
+        log_step(
+            db, tenant_id=tenant_id, agent_name="ReviewGateService",
+            tool_name="review_gate_service.evaluate",
+            step_name="review_gate_evaluated",
+            status="completed",
+            integration_id=integration_id,
+            event_log_id=event_log_id,
+            merge_review_run_id=review_run.id,
+            output_summary=f"gate_status={gate_result['gate_status']} reason={gate_result['reason']}",
+        )
+
+        if gate_result["gate_status"] == "blocked":
+            revert_service.mark_revert_required(db, review_run, gate_result["reason"])
+
+            log_step(
+                db, tenant_id=tenant_id, agent_name="ReviewGateService",
+                tool_name="review_gate_service",
+                step_name="pipeline_blocked_by_review_gate",
+                status="completed",
+                integration_id=integration_id,
+                event_log_id=event_log_id,
+                merge_review_run_id=review_run.id,
+                output_summary=f"Pipeline blocked. task={task_key} sprint={sprint_name}",
+            )
+            log_step(
+                db, tenant_id=tenant_id, agent_name="ReviewGateService",
+                tool_name="review_gate_service",
+                step_name="functional_tests_skipped",
+                status="completed",
+                integration_id=integration_id,
+                event_log_id=event_log_id,
+                merge_review_run_id=review_run.id,
+                output_summary="Functional tests skipped because review gate is blocked.",
+            )
+            log_step(
+                db, tenant_id=tenant_id, agent_name="ReviewGateService",
+                tool_name="review_gate_service",
+                step_name="promotion_blocked",
+                status="completed",
+                integration_id=integration_id,
+                event_log_id=event_log_id,
+                merge_review_run_id=review_run.id,
+                output_summary="DEV/TEST promotion blocked because review gate is blocked.",
+            )
+            log_step(
+                db, tenant_id=tenant_id, agent_name="RevertService",
+                tool_name="revert_service.mark_revert_required",
+                step_name="revert_required_marked",
+                status="completed",
+                integration_id=integration_id,
+                event_log_id=event_log_id,
+                merge_review_run_id=review_run.id,
+                output_summary=f"revert_status=required reason={gate_result['reason']}",
+            )
+
+            # Record blocked promotion for traceability
+            blocked_promotion = EnvironmentPromotionLog(
+                tenant_id=tenant_id,
+                integration_id=integration_id,
+                merge_review_run_id=review_run.id,
+                from_stage="sprint",
+                to_stage="test",
+                status="blocked_by_review_gate",
+                message=(
+                    f"Task {task_key} failed code review. "
+                    "Review gate blocked because CodeReviewAgent rejected the merge. "
+                    "Promotion blocked. Revert required."
+                ),
+            )
+            db.add(blocked_promotion)
+            db.commit()
+
         # ── Update user stats ────────────────────────────────────────────────
         stat_field = "successful_review_count" if report["result"] == "success" else "failed_review_count"
         increment(db, tenant_id, integration_id, actor_username, actor_email or "", stat_field)
@@ -200,7 +280,7 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
             subject = f"[REVIEW SUCCESS] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
             notification_type = "review_success"
         else:
-            subject = f"[REVIEW FAILED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
+            subject = f"[REVIEW FAILED - MERGE BLOCKED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
             notification_type = "review_failed"
 
         notif = create_notification_log(
@@ -238,7 +318,7 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
         else:
             mark_failed(db, notif.id, "SMTP send failed")
 
-        # ── Functional tests (only if approved) ─────────────────────────────
+        # ── Functional tests (only if gate passed) ───────────────────────────
         if passed:
             run_tests_for_review(
                 db=db,
@@ -255,7 +335,7 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
             )
         else:
             logger.info(
-                f"Functional tests SKIPPED — review rejected for {task_key} / {sprint_name}"
+                f"Functional tests SKIPPED — review gate blocked for {task_key} / {sprint_name}"
             )
 
     except Exception as exc:

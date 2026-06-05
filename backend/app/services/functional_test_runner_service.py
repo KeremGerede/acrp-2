@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from app.models.functional_test import FunctionalTestConfig, FunctionalTestRun
+from app.models.merge_review import MergeReviewRun
 from app.models.promotion import EnvironmentPromotionLog
 from app.agents.functional_test_agent import run_functional_tests
 from app.services.lifecycle_status_service import update_test_status
@@ -42,6 +43,17 @@ def run_tests_for_review(
     actor_email: Optional[str],
     integration,
 ):
+    # Guard: do not run tests if review gate is blocked
+    if merge_review_run_id:
+        review_run = db.query(MergeReviewRun).filter_by(id=merge_review_run_id).first()
+        if review_run and getattr(review_run, "gate_status", None) == "blocked":
+            logger.warning(
+                f"[FunctionalTestRunner] Tests SKIPPED — review gate blocked "
+                f"for run {merge_review_run_id}. "
+                f"Reason: {getattr(review_run, 'gate_reason', 'Review gate blocked')}"
+            )
+            return
+
     configs = db.query(FunctionalTestConfig).filter_by(
         tenant_id=tenant_id, integration_id=integration_id, is_enabled=True
     ).all()

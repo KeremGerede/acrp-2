@@ -25,5 +25,10 @@ class MergeReviewRunResponse(BaseModel):
     total_findings: int
     blocking_findings_count: int
     report_summary: Optional[str] = None
+    gate_status: Optional[str] = None
+    gate_reason: Optional[str] = None
+    revert_status: Optional[str] = None
+    revert_pr_url: Optional[str] = None
+    revert_branch_name: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
