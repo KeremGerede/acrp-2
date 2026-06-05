@@ -32,6 +32,8 @@ class MergeReviewRun(Base):
     revert_status = Column(String(50), default="not_required")  # not_required, required, revert_pr_created, reverted, revert_failed
     revert_pr_url = Column(String(1000))
     revert_branch_name = Column(String(500))
+    revert_error_message = Column(Text)
+    reverted_at = Column(DateTime)
     started_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)

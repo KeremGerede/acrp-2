@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     DEFAULT_WEBHOOK_SECRET: str = "change-me"
     GITHUB_TOKEN: str = ""
+    # create_revert_pr | create_and_merge_revert_pr | disabled
+    AUTO_REVERT_MODE: str = "create_and_merge_revert_pr"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

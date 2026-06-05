@@ -352,13 +352,60 @@ class EmailService:
                 </p>
               </div>"""
         else:
-            revert_pr_url = getattr(review_run, "revert_pr_url", None)
-            revert_status_val = getattr(review_run, "revert_status", "required")
-            revert_status_display = "REVERT PR OLUŞTURULDU" if revert_status_val == "revert_pr_created" else "GEREKLİ"
+            revert_status_val   = getattr(review_run, "revert_status", "required")
+            revert_pr_url       = getattr(review_run, "revert_pr_url", None)
+            revert_error_msg    = getattr(review_run, "revert_error_message", None)
+            reverted_at         = getattr(review_run, "reverted_at", None)
+
+            _REVERT_LABELS = {
+                "not_required":             ("GEREKLİ DEĞİL",                      "#16a34a"),
+                "required":                 ("⚠ GEREKLİ",                          "#f97316"),
+                "started":                  ("⏳ BAŞLADI",                          "#6366f1"),
+                "revert_pr_created":        ("🔀 REVERT PR OLUŞTURULDU",            "#6366f1"),
+                "revert_auto_merge_started":("⏳ OTOMATİK MERGE BAŞLADI",           "#6366f1"),
+                "reverted":                 ("✅ OTOMATİK GERİ ALINDI",             "#16a34a"),
+                "revert_conflict":          ("⚠ ÇAKIŞMA — MANUEL MÜDAHALE GEREKLİ","#dc2626"),
+                "revert_failed":            ("❌ BAŞARISIZ — MANUEL MÜDAHALE GEREKLİ","#dc2626"),
+            }
+            rs_label, rs_color = _REVERT_LABELS.get(revert_status_val, ("⚠ GEREKLİ", "#f97316"))
+
             revert_pr_row = (
                 f'<tr><td style="color:#6b7280;padding:3px 0">Revert PR:</td>'
-                f'<td><a href="{revert_pr_url}" style="color:#dc2626">{revert_pr_url}</a></td></tr>'
+                f'<td><a href="{revert_pr_url}" style="color:#1d4ed8;text-decoration:underline">'
+                f'{revert_pr_url}</a></td></tr>'
             ) if revert_pr_url else ""
+
+            revert_error_row = (
+                f'<tr><td style="color:#6b7280;padding:3px 0;vertical-align:top">Revert Hatası:</td>'
+                f'<td style="color:#dc2626;font-size:12px">{revert_error_msg}</td></tr>'
+            ) if revert_error_msg else ""
+
+            reverted_at_row = (
+                f'<tr><td style="color:#6b7280;padding:3px 0">Geri Alınma Zamanı:</td>'
+                f'<td style="color:#16a34a;font-weight:600">{reverted_at}</td></tr>'
+            ) if reverted_at else ""
+
+            # Trailing sentence depends on whether revert succeeded
+            if revert_status_val == "reverted":
+                revert_notice = (
+                    "RevertAgent merge edilen değişiklikleri <strong>otomatik olarak geri aldı</strong>. "
+                    "Revert PR yukarıdaki URL üzerinden incelenebilir."
+                )
+            elif revert_status_val == "revert_pr_created":
+                revert_notice = (
+                    "RevertAgent bir <strong>revert PR oluşturdu</strong>. "
+                    "PR'ı merge ederek değişiklikleri geri alabilirsiniz."
+                )
+            elif revert_status_val in ("revert_failed", "revert_conflict"):
+                revert_notice = (
+                    "RevertAgent değişiklikleri geri almaya çalıştı ancak <strong>başarısız oldu</strong>. "
+                    "Lütfen branch'ı manuel olarak revert edin."
+                )
+            else:
+                revert_notice = (
+                    "RevertAgent tetiklendi. Revert işlemi için lütfen ekibinizle iletişime geçin."
+                )
+
             next_step = f"""
               <div style="margin-top:20px;padding:14px 16px;background:#fef2f2;
                           border-left:4px solid #dc2626;border-radius:4px">
@@ -366,17 +413,20 @@ class EmailService:
                   🚫 MERGE BLOCKED — İnceleme reddedildi, pipeline durduruldu.
                 </p>
                 <table style="font-size:12px;width:100%;border-collapse:collapse">
-                  <tr><td style="color:#6b7280;width:180px;padding:3px 0">Karar:</td><td style="color:#991b1b;font-weight:600">❌ REDDEDİLDİ</td></tr>
+                  <tr><td style="color:#6b7280;width:200px;padding:3px 0">Karar:</td><td style="color:#991b1b;font-weight:600">❌ REDDEDİLDİ</td></tr>
                   <tr><td style="color:#6b7280;padding:3px 0">Gate Durumu:</td><td style="color:#dc2626;font-weight:600">🚫 ENGELLENDİ</td></tr>
                   <tr><td style="color:#6b7280;padding:3px 0">Fonksiyonel Test:</td><td style="color:#dc2626;font-weight:600">⏭ ATLANILDI</td></tr>
                   <tr><td style="color:#6b7280;padding:3px 0">Promosyon:</td><td style="color:#dc2626;font-weight:600">🚫 ENGELLENDİ</td></tr>
-                  <tr><td style="color:#6b7280;padding:3px 0">Revert Durumu:</td><td style="color:#f97316;font-weight:600">⚠ {revert_status_display}</td></tr>
+                  <tr><td style="color:#6b7280;padding:3px 0">Revert Durumu:</td>
+                      <td style="color:{rs_color};font-weight:600">{rs_label}</td></tr>
                   {revert_pr_row}
+                  {reverted_at_row}
+                  {revert_error_row}
                 </table>
                 <p style="margin:12px 0 0;font-size:13px;color:#991b1b">
-                  Bu merge review'den geçemediği için functional test aşaması çalıştırılmadı ve
-                  DEV/TEST promotion süreci engellendi. Lütfen bu branch'ı revert edin veya
-                  ilgili sorunları gidererek yeniden merge isteği oluşturun.
+                  Bu merge CodeReviewAgent tarafından reddedildiği için pipeline durduruldu.
+                  Functional test aşaması çalıştırılmadı ve DEV/TEST promotion süreci engellendi.
+                  {revert_notice}
                 </p>
               </div>"""
 

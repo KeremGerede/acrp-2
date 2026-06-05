@@ -24,6 +24,10 @@ _MIGRATIONS = [
      "ALTER TABLE merge_review_runs ADD COLUMN revert_pr_url VARCHAR(1000)"),
     ("merge_review_runs", "revert_branch_name",
      "ALTER TABLE merge_review_runs ADD COLUMN revert_branch_name VARCHAR(500)"),
+    ("merge_review_runs", "revert_error_message",
+     "ALTER TABLE merge_review_runs ADD COLUMN revert_error_message TEXT"),
+    ("merge_review_runs", "reverted_at",
+     "ALTER TABLE merge_review_runs ADD COLUMN reverted_at DATETIME"),
 ]
 
 

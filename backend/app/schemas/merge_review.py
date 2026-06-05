@@ -30,5 +30,7 @@ class MergeReviewRunResponse(BaseModel):
     revert_status: Optional[str] = None
     revert_pr_url: Optional[str] = None
     revert_branch_name: Optional[str] = None
+    revert_error_message: Optional[str] = None
+    reverted_at: Optional[datetime] = None
     created_at: datetime
     completed_at: Optional[datetime] = None

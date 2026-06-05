@@ -22,8 +22,8 @@ from app.services.email_service import email_service
 from app.services.functional_test_runner_service import run_tests_for_review
 from app.services.pdf_report_service import generate_review_pdf
 from app.services.review_gate_service import review_gate_service
-from app.services.revert_service import revert_service
 from app.services.agent_step_service import log_step
+from app.agents.revert_agent import run_revert
 from app.models.promotion import EnvironmentPromotionLog
 from app.tools.changed_files_fetcher_tool import fetch_changed_files
 from app.agents.reviewer_agent import run_review
@@ -208,8 +208,6 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
         )
 
         if gate_result["gate_status"] == "blocked":
-            revert_service.mark_revert_required(db, review_run, gate_result["reason"])
-
             log_step(
                 db, tenant_id=tenant_id, agent_name="ReviewGateService",
                 tool_name="review_gate_service",
@@ -240,16 +238,6 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
                 merge_review_run_id=review_run.id,
                 output_summary="DEV/TEST promotion blocked because review gate is blocked.",
             )
-            log_step(
-                db, tenant_id=tenant_id, agent_name="RevertService",
-                tool_name="revert_service.mark_revert_required",
-                step_name="revert_required_marked",
-                status="completed",
-                integration_id=integration_id,
-                event_log_id=event_log_id,
-                merge_review_run_id=review_run.id,
-                output_summary=f"revert_status=required reason={gate_result['reason']}",
-            )
 
             # Record blocked promotion for traceability
             blocked_promotion = EnvironmentPromotionLog(
@@ -262,11 +250,24 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
                 message=(
                     f"Task {task_key} failed code review. "
                     "Review gate blocked because CodeReviewAgent rejected the merge. "
-                    "Promotion blocked. Revert required."
+                    "Promotion blocked. RevertAgent triggered."
                 ),
             )
             db.add(blocked_promotion)
             db.commit()
+
+            # ── RevertAgent: automatically revert the failed merge ───────────
+            try:
+                run_revert(
+                    db=db,
+                    tenant_id=tenant_id,
+                    integration_id=integration_id,
+                    review_run=review_run,
+                    event_log_id=event_log_id,
+                    integration=integration,
+                )
+            except Exception as _rev_exc:
+                logger.error(f"RevertAgent raised an unexpected error: {_rev_exc}")
 
         # ── Update user stats ────────────────────────────────────────────────
         stat_field = "successful_review_count" if report["result"] == "success" else "failed_review_count"
@@ -276,19 +277,32 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
         recipients = _collect_recipients(integration, actor_email)
         passed = report["result"] == "success"
 
+        # Refresh after RevertAgent so email reflects actual revert outcome
+        review_run_refreshed = db.query(MergeReviewRun).filter_by(id=review_run.id).first()
+
         if passed:
             subject = f"[REVIEW SUCCESS] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
             notification_type = "review_success"
         else:
-            subject = f"[REVIEW FAILED - MERGE BLOCKED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
-            notification_type = "review_failed"
+            _rs = getattr(review_run_refreshed, "revert_status", "required")
+            if _rs == "reverted":
+                subject = f"[MERGE REVERTED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
+                notification_type = "merge_reverted"
+            elif _rs == "revert_pr_created":
+                subject = f"[REVERT PR CREATED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
+                notification_type = "revert_pr_created"
+            elif _rs in ("revert_failed", "revert_conflict"):
+                subject = f"[REVERT FAILED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
+                notification_type = "revert_failed"
+            else:
+                subject = f"[REVIEW FAILED - MERGE BLOCKED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
+                notification_type = "review_failed"
 
         notif = create_notification_log(
             db, tenant_id, integration_id, notification_type, subject, recipients,
             related_entity_type="merge_review", related_entity_id=review_run.id,
         )
 
-        review_run_refreshed = db.query(MergeReviewRun).filter_by(id=review_run.id).first()
         body = email_service.build_review_body(
             review_run_refreshed, findings_objs, improvements=improvements,
             passed_checks=passed_checks, failed_checks=failed_checks,
