@@ -131,8 +131,19 @@ class EmailService:
             return False
 
     # ── Code Review ───────────────────────────────────────────────────────────
-    def build_review_body(self, review_run, findings: list, improvements: list = None) -> str:
+    def build_review_body(
+        self,
+        review_run,
+        findings: list,
+        improvements: list = None,
+        passed_checks: list = None,
+        failed_checks: list = None,
+        file_assessments: list = None,
+    ) -> str:
         improvements = improvements or []
+        passed_checks = passed_checks or []
+        failed_checks = failed_checks or []
+        file_assessments = file_assessments or []
         result  = review_run.result or "unknown"
         passed  = result == "success"
         hdr_color   = "#16a34a" if passed else "#dc2626"
@@ -155,6 +166,101 @@ class EmailService:
             ("Toplam Bulgu",              str(review_run.total_findings)),
             ("Engelleyici Bulgu",         str(review_run.blocking_findings_count)),
         ])
+
+        # ── Dosya Bazli Inceleme Sonucu ──────────────────────────────────────
+        _FA_STATUS_CLS = {
+            "passed": "tag-success",
+            "passed_with_warnings": "tag-warning",
+            "failed": "tag-failed",
+        }
+        _FA_STATUS_LBL = {
+            "passed": "Geçti",
+            "passed_with_warnings": "Uyarı ile geçti",
+            "failed": "Başarısız",
+        }
+        file_assess_section = ""
+        if file_assessments:
+            rows = ""
+            for fa in file_assessments:
+                status = fa.get("status", "passed")
+                s_cls = _FA_STATUS_CLS.get(status, "tag-info")
+                s_lbl = _FA_STATUS_LBL.get(status, status)
+                passed_pts = fa.get("passed_points", [])
+                remaining_pts = fa.get("remaining_points", [])
+                p_html = "".join(
+                    f"<li style='font-size:12px;color:#374151;line-height:1.6'>{pt}</li>"
+                    for pt in passed_pts
+                ) if passed_pts else ""
+                r_html = "".join(
+                    f"<li style='font-size:12px;color:#374151;line-height:1.6'>{pt}</li>"
+                    for pt in remaining_pts
+                ) if remaining_pts else ""
+                rows += f"""
+                <div style="border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;margin-bottom:8px">
+                  <div style="font-family:monospace;font-size:12px;color:#111827;font-weight:600">{fa.get('file_path', '-')}</div>
+                  <div style="margin-top:4px"><span class="badge {s_cls}">{s_lbl}</span></div>
+                  {"<p style='font-size:12px;color:#6b7280;margin:8px 0 2px;font-weight:600'>Geçen noktalar:</p><ul style='margin:2px 0;padding-left:18px'>" + p_html + "</ul>" if p_html else ""}
+                  {"<p style='font-size:12px;color:#6b7280;margin:8px 0 2px;font-weight:600'>Kalan noktalar:</p><ul style='margin:2px 0;padding-left:18px'>" + r_html + "</ul>" if r_html else ""}
+                </div>"""
+            file_assess_section = f"<h3>Dosya Bazlı İnceleme Sonucu</h3>{rows}"
+
+        # ── Basariyla Gecen Kontroller ────────────────────────────────────────
+        passed_checks_section = ""
+        if passed_checks:
+            cards = ""
+            for idx, pc in enumerate(passed_checks, 1):
+                evidence_row = (
+                    f"<p style='margin:4px 0 0;font-size:12px;color:#374151'>"
+                    f"<strong>Kanıt:</strong> {pc.get('evidence', '')}</p>"
+                ) if pc.get("evidence") else ""
+                reason_row = (
+                    f"<p style='margin:4px 0 0;font-size:12px;color:#374151'>{pc.get('reason', '')}</p>"
+                ) if pc.get("reason") else ""
+                cards += f"""
+                <div style="border-left:3px solid #16a34a;background:#f0fdf4;border-radius:4px;padding:10px 14px;margin-bottom:10px">
+                  <p style="margin:0;font-size:12px;font-weight:600;color:#166534">Kontrol {idx}: {pc.get('check_title', '-')}</p>
+                  <p style="margin:2px 0 0;font-size:11px;font-family:monospace;color:#6b7280">{pc.get('file_path', '')}</p>
+                  {evidence_row}
+                  {reason_row}
+                </div>"""
+            passed_checks_section = f"<h3>Başarıyla Geçen Kontroller ({len(passed_checks)})</h3>{cards}"
+
+        # ── Kalan / Duzeltilmesi Gereken Kisimlar ────────────────────────────
+        if findings:
+            kalan_items = ""
+            for idx, f in enumerate(findings, 1):
+                sev = (f.severity or "info").lower()
+                file_line = f.file_path or "—"
+                if f.line_number:
+                    file_line += f":{f.line_number}"
+                issue_row = (
+                    f"<p class='finding-label'>Sorun</p>"
+                    f"<p class='finding-value'>{f.issue}</p>"
+                ) if f.issue else ""
+                beklenen_row = (
+                    f"<p class='finding-label'>Beklenen</p>"
+                    f"<p class='finding-value'>{f.suggestion}</p>"
+                ) if f.suggestion else ""
+                etki_row = (
+                    f"<p class='finding-label'>Etki</p>"
+                    f"<p class='finding-value'>{f.explanation}</p>"
+                ) if f.explanation else ""
+                kalan_items += f"""
+                <div style="border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;margin-bottom:8px">
+                  <div style="font-family:monospace;font-size:11px;color:#6b7280;margin-bottom:6px">
+                    {idx}. {file_line} &nbsp;{_badge(sev.upper())}
+                  </div>
+                  {issue_row}
+                  {beklenen_row}
+                  {etki_row}
+                </div>"""
+            kalan_section = f"<h3>Kalan / Düzeltilmesi Gereken Kısımlar</h3>{kalan_items}"
+        else:
+            kalan_section = (
+                "<h3>Kalan / Düzeltilmesi Gereken Kısımlar</h3>"
+                "<p style='color:#16a34a;font-size:13px'>"
+                "Engelleyici veya düzeltme gerektiren bir bulgu tespit edilmedi.</p>"
+            )
 
         # ── Bulgular (kart formatı) ───────────────────────────────────────────
         if findings:
@@ -274,6 +380,10 @@ class EmailService:
 
     <h3>Karar Gerekçesi</h3>
     <p>{review_run.decision_reason or "—"}</p>
+
+    {file_assess_section}
+    {passed_checks_section}
+    {kalan_section}
 
     {findings_section}
     {improvements_section}

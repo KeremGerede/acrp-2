@@ -31,7 +31,17 @@ def _s(text) -> str:
     return t.encode("latin-1", errors="replace").decode("latin-1")
 
 
-def generate_review_pdf(review_run, findings: List) -> bytes:
+def generate_review_pdf(
+    review_run,
+    findings: List,
+    passed_checks: list = None,
+    failed_checks: list = None,
+    file_assessments: list = None,
+) -> bytes:
+    passed_checks = passed_checks or []
+    failed_checks = failed_checks or []
+    file_assessments = file_assessments or []
+
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -170,6 +180,116 @@ def generate_review_pdf(review_run, findings: List) -> bytes:
             pdf.set_draw_color(229, 231, 235)
             pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
             pdf.ln(5)
+
+    # ── Dosya Bazli Inceleme Sonucu ───────────────────────────────────────────
+    if file_assessments:
+        pdf.ln(4)
+        _section_title(pdf, "Dosya Bazli Inceleme Sonucu")
+        _FA_STATUS_LABEL = {
+            "passed": "Gecti",
+            "passed_with_warnings": "Uyari ile gecti",
+            "failed": "Basarisiz",
+        }
+        for fa in file_assessments:
+            status = fa.get("status", "passed")
+            status_label = _FA_STATUS_LABEL.get(status, status)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(17, 24, 39)
+            pdf.multi_cell(0, 6, _s(f"Dosya: {fa.get('file_path', '-')}"))
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(55, 65, 81)
+            pdf.multi_cell(0, 5, _s(f"Durum: {status_label}"))
+            pdf.ln(1)
+            passed_pts = fa.get("passed_points", [])
+            if passed_pts:
+                _field_label(pdf, "Gecen noktalar")
+                pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(55, 65, 81)
+                for pt in passed_pts:
+                    pdf.multi_cell(0, 5, _s(f"  - {pt}"))
+            remaining_pts = fa.get("remaining_points", [])
+            if remaining_pts:
+                _field_label(pdf, "Kalan noktalar")
+                pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(55, 65, 81)
+                for pt in remaining_pts:
+                    pdf.multi_cell(0, 5, _s(f"  - {pt}"))
+            pdf.ln(4)
+            pdf.set_draw_color(229, 231, 235)
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+            pdf.ln(4)
+
+    # ── Basariyla Gecen Kontroller ────────────────────────────────────────────
+    if passed_checks:
+        pdf.ln(2)
+        _section_title(pdf, f"Basariyla Gecen Kontroller ({len(passed_checks)})")
+        for idx, pc in enumerate(passed_checks, 1):
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(17, 24, 39)
+            pdf.cell(0, 6, _s(f"Kontrol {idx}"), new_x="LMARGIN", new_y="NEXT")
+            _field_label(pdf, "Dosya")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(17, 24, 39)
+            pdf.multi_cell(0, 5, _s(pc.get("file_path", "-")))
+            _field_label(pdf, "Kontrol")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(17, 24, 39)
+            pdf.multi_cell(0, 5, _s(pc.get("check_title", "-")))
+            if pc.get("evidence"):
+                _field_label(pdf, "Kanit")
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(55, 65, 81)
+                pdf.multi_cell(0, 5, _s(pc["evidence"]))
+            if pc.get("reason"):
+                _field_label(pdf, "Aciklama")
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(55, 65, 81)
+                pdf.multi_cell(0, 5, _s(pc["reason"]))
+            pdf.ln(4)
+            pdf.set_draw_color(229, 231, 235)
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+            pdf.ln(4)
+
+    # ── Kalan / Duzeltilmesi Gereken Kisimlar ────────────────────────────────
+    pdf.ln(2)
+    _section_title(pdf, "Kalan / Duzeltilmesi Gereken Kisimlar")
+    if findings:
+        for idx, f in enumerate(findings, 1):
+            sev = (f.severity or "info").lower()
+            file_line = _s(f.file_path or "-")
+            if f.line_number:
+                file_line += f":{f.line_number}"
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(17, 24, 39)
+            pdf.multi_cell(0, 6, f"{idx}. {file_line}")
+            _field_label(pdf, "Durum")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(55, 65, 81)
+            pdf.multi_cell(0, 5, sev.upper())
+            if f.issue:
+                _field_label(pdf, "Sorun")
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(17, 24, 39)
+                pdf.multi_cell(0, 5, _s(f.issue))
+            if f.suggestion:
+                _field_label(pdf, "Beklenen")
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(55, 65, 81)
+                pdf.multi_cell(0, 5, _s(f.suggestion))
+            if f.explanation:
+                _field_label(pdf, "Etki")
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(55, 65, 81)
+                pdf.multi_cell(0, 5, _s(f.explanation))
+            pdf.ln(4)
+            pdf.set_draw_color(229, 231, 235)
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+            pdf.ln(4)
+    else:
+        pdf.set_font("Helvetica", "I", 10)
+        pdf.set_text_color(107, 114, 128)
+        pdf.cell(0, 8, "Engelleyici veya duzeltme gerektiren bir bulgu tespit edilmedi.",
+                 new_x="LMARGIN", new_y="NEXT")
 
     # ── Footer ────────────────────────────────────────────────────────────────
     pdf.ln(6)

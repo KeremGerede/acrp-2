@@ -158,6 +158,9 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
         db.commit()
 
         improvements = report.get("improvements", [])
+        passed_checks = report.get("passed_checks", [])
+        failed_checks = report.get("failed_checks", [])
+        file_assessments = report.get("file_assessments", [])
         blocking = report.get("blocking_findings_count", 0)
 
         # Serialize full agent response for audit trail
@@ -168,6 +171,9 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
             "decision_reason": report.get("decision_reason"),
             "findings": report.get("findings", []),
             "improvements": improvements,
+            "passed_checks": passed_checks,
+            "failed_checks": failed_checks,
+            "file_assessments": file_assessments,
         }, ensure_ascii=False)
 
         update_review_status(
@@ -204,12 +210,18 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
 
         review_run_refreshed = db.query(MergeReviewRun).filter_by(id=review_run.id).first()
         body = email_service.build_review_body(
-            review_run_refreshed, findings_objs, improvements=improvements
+            review_run_refreshed, findings_objs, improvements=improvements,
+            passed_checks=passed_checks, failed_checks=failed_checks,
+            file_assessments=file_assessments,
         )
 
         pdf_bytes = None
         try:
-            pdf_bytes = generate_review_pdf(review_run_refreshed, findings_objs)
+            pdf_bytes = generate_review_pdf(
+                review_run_refreshed, findings_objs,
+                passed_checks=passed_checks, failed_checks=failed_checks,
+                file_assessments=file_assessments,
+            )
         except Exception as exc:
             logger.warning(f"PDF generation failed, sending email without attachment: {exc}")
 

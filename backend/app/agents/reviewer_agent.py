@@ -61,12 +61,25 @@ For every changed file, check:
 For each finding, check whether it violates one of the configured Review Rules above
 and reference that rule title exactly.
 
+## Summary Writing Rules  (IMPORTANT)
+The "summary" field must be evidence-based, not generic. Include:
+1. How many files were analyzed.
+2. Whether blocking findings (critical/high severity) were detected.
+3. The most important finding(s) by name/file if any exist.
+4. Why the review was approved or rejected.
+Do NOT write vague praise ("mimarisi iyilesti", "saglamdir", "onemli ilerleme", etc.).
+Do NOT claim code quality or architectural improvements unless the diff explicitly shows them.
+Do NOT mention anything not visible in the changed code.
+If no findings: clearly state no blocking findings were detected.
+GOOD: "Bu review kapsaminda 3 dosya incelendi. Engelleyici seviyede bulgu tespit edilmedi. CarsController.cs dosyasinda HTTP response standardi ve newline eksikligi ile ilgili iki dusuk riskli bulgu bulundu. Bu bulgular merge'i engellememektedir, review onaylandi."
+BAD: "Bu merge request backend mimarisini onemli olcude iyilestirmektedir ve genel olarak saglamdir."
+
 ## Output Requirements
 Return ONLY valid JSON — no markdown fences, no explanation outside the JSON.
 
 {{
   "result": "success",
-  "summary": "2-4 sentence summary of what changed and overall quality assessment.",
+  "summary": "Evidence-based 2-4 sentence summary in Turkish. Follow Summary Writing Rules above.",
   "risk_level": "low",
   "decision_reason": "Concise explanation of the final decision.",
   "findings": [
@@ -89,8 +102,53 @@ Return ONLY valid JSON — no markdown fences, no explanation outside the JSON.
       "description": "What could be improved and why it would help.",
       "suggestion": "How to implement it."
     }}
+  ],
+  "passed_checks": [
+    {{
+      "file_path": "path/to/file.py",
+      "check_title": "Short title, e.g. 'Dependency Injection kullanimi'",
+      "evidence": "Direct quote or reference from the diff showing this check passed.",
+      "reason": "Why this passing check matters."
+    }}
+  ],
+  "failed_checks": [
+    {{
+      "file_path": "path/to/file.py",
+      "check_title": "Short title of what failed.",
+      "severity": "info|warning|high|critical",
+      "reason": "What did not pass and why.",
+      "related_finding_index": 1
+    }}
+  ],
+  "file_assessments": [
+    {{
+      "file_path": "path/to/file.py",
+      "status": "passed|passed_with_warnings|failed",
+      "passed_points": ["Visible evidence of something correct in this file's diff."],
+      "remaining_points": ["Issue or improvement that still needs attention."]
+    }}
   ]
 }}
+
+## Rules for passed_checks
+- ONLY add a check if there is visible evidence in the diff. Do NOT invent.
+- Do NOT say "test coverage is good" unless test files are in the diff.
+- Valid examples: constructor-based dependency injection visible, DTO used correctly,
+  input validation present, error handling found, fallback logic present.
+- If the diff does not provide enough evidence, do not add the check.
+
+## Rules for failed_checks
+- Base each failed_check on an existing finding.
+- related_finding_index is 1-based index into the findings array.
+- Explain what the check was and why it did not pass.
+
+## Rules for file_assessments
+- Include every changed file.
+- status = "failed" if ANY high or critical finding exists for that file.
+- status = "passed_with_warnings" if only warning or info findings exist.
+- status = "passed" if no issues were found.
+- passed_points: only include claims directly backed by visible diff evidence.
+- remaining_points: use finding text as source; do not invent issues.
 
 ## Decision Rules (apply these yourself before setting result)
 - result = "failed"  if ANY finding has severity "critical" or "high"
@@ -104,7 +162,8 @@ Return ONLY valid JSON — no markdown fences, no explanation outside the JSON.
 
 ## Language Requirement  (IMPORTANT)
 Write ALL explanatory text in Turkish.
-This includes: summary, decision_reason, issue, explanation, suggestion, description, title fields.
+This includes: summary, decision_reason, issue, explanation, suggestion, description, title,
+check_title, evidence, reason, passed_points items, remaining_points items.
 Keep technical software terms in English as-is:
   API, endpoint, controller, service, repository, DTO, webhook, commit, branch, merge,
   pull request, dependency injection, SQL injection, XSS, SSRF, JWT, token, HTTP, REST,
@@ -213,7 +272,8 @@ def run_review(
         output_summary=(
             f"result={raw.get('result')}, "
             f"findings={len(raw.get('findings', []))}, "
-            f"improvements={len(raw.get('improvements', []))}"
+            f"passed_checks={len(raw.get('passed_checks', []))}, "
+            f"file_assessments={len(raw.get('file_assessments', []))}"
         ),
     )
 
