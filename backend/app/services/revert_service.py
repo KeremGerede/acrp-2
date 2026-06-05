@@ -146,6 +146,33 @@ class RevertService:
             logger.warning(f"[RevertService] find_pr_by_commit failed: {exc}")
         return None, None
 
+    # ── REST: fetch revert PR base branch ────────────────────────────────────
+
+    def get_revert_pr_base_branch(
+        self,
+        repo_full_name: str,
+        pr_number: int,
+        token: Optional[str],
+    ) -> Optional[str]:
+        """
+        Fetch the base (target) branch of a PR via REST API.
+        GET /repos/{owner}/{repo}/pulls/{number}
+        Returns the base branch ref string, or None on failure.
+        """
+        headers = self._auth_headers(token)
+        url = f"{_GITHUB_API}/repos/{repo_full_name}/pulls/{pr_number}"
+        try:
+            resp = requests.get(url, headers=headers, timeout=20)
+            if resp.ok:
+                return resp.json().get("base", {}).get("ref")
+            logger.warning(
+                f"[RevertService] GET pulls/{pr_number} returned {resp.status_code} "
+                f"while fetching base branch: {resp.text[:200]}"
+            )
+        except Exception as exc:
+            logger.warning(f"[RevertService] get_revert_pr_base_branch failed: {exc}")
+        return None
+
     # ── GraphQL: create revert PR ─────────────────────────────────────────────
 
     def create_revert_pr_graphql(

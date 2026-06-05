@@ -111,6 +111,10 @@ def run_revert(
               "revert_required_due_to_missing_pr", "completed", output_summary=reason)
         return {"status": "required", "revert_pr_url": None, "error": reason}
 
+    # Mark that revert is actively being attempted
+    review_run.revert_status = "started"
+    db.commit()
+
     token = _get_token(db, integration_id)
     event_log = db.query(SCMEventLog).filter_by(id=event_log_id).first()
 
@@ -197,6 +201,25 @@ def run_revert(
           output_summary=f"revert_pr_url={revert_pr_url} branch={revert_branch}")
     logger.info(f"[RevertAgent] Revert PR created: {revert_pr_url}")
 
+    # ── Validate revert PR base branch ────────────────────────────────────────
+    expected_base = review_run.target_branch or ""
+    actual_base = revert_service.get_revert_pr_base_branch(repo, revert_pr_number, token)
+    if actual_base is not None and actual_base != expected_base:
+        error_msg = (
+            f"Revert PR #{revert_pr_number} targets '{actual_base}' "
+            f"but the original merge targeted '{expected_base}'. "
+            "Auto-merge aborted to prevent merging into the wrong branch."
+        )
+        logger.error(f"[RevertAgent] Base branch mismatch: {error_msg}")
+        _mark_failed(db, review_run, "revert_failed", error_msg)
+        _step(db, tenant_id, integration_id, event_log_id, review_run.id,
+              "revert_pr_base_branch_validated", "failed", output_summary=error_msg)
+        return {"status": "revert_failed", "revert_pr_url": revert_pr_url, "error": error_msg}
+
+    _step(db, tenant_id, integration_id, event_log_id, review_run.id,
+          "revert_pr_base_branch_validated", "completed",
+          output_summary=f"base={actual_base or 'unknown'} expected={expected_base}")
+
     # ── Stop if mode is create_revert_pr only ─────────────────────────────────
     if mode != "create_and_merge_revert_pr":
         return {"status": "revert_pr_created", "revert_pr_url": revert_pr_url, "error": None}
@@ -221,7 +244,7 @@ def run_revert(
         review_run.reverted_at   = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
         _step(db, tenant_id, integration_id, event_log_id, review_run.id,
-              "revert_completed", "completed",
+              "revert_auto_merge_completed", "completed",
               output_summary=f"Revert PR #{revert_pr_number} auto-merged successfully.")
         logger.info(f"[RevertAgent] Revert PR #{revert_pr_number} auto-merged. ✓")
         return {"status": "reverted", "revert_pr_url": revert_pr_url, "error": None}
@@ -245,5 +268,8 @@ def run_revert(
 
     _step(db, tenant_id, integration_id, event_log_id, review_run.id,
           step_name, "failed", output_summary=error_msg)
+    _step(db, tenant_id, integration_id, event_log_id, review_run.id,
+          "revert_auto_merge_failed", "failed",
+          output_summary=f"final_status={final_status} error={error_msg}")
     logger.warning(f"[RevertAgent] Auto-merge failed ({final_status}): {error_msg}")
     return {"status": final_status, "revert_pr_url": revert_pr_url, "error": error_msg}

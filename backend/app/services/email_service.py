@@ -388,13 +388,15 @@ class EmailService:
             # Trailing sentence depends on whether revert succeeded
             if revert_status_val == "reverted":
                 revert_notice = (
-                    "RevertAgent merge edilen değişiklikleri <strong>otomatik olarak geri aldı</strong>. "
+                    "RevertAgent revert PR'ı oluşturdu ve <strong>otomatik olarak merge etti</strong>. "
+                    "Başarısız merge <strong>geri alındı</strong>. "
                     "Revert PR yukarıdaki URL üzerinden incelenebilir."
                 )
             elif revert_status_val == "revert_pr_created":
                 revert_notice = (
                     "RevertAgent bir <strong>revert PR oluşturdu</strong>. "
-                    "PR'ı merge ederek değişiklikleri geri alabilirsiniz."
+                    "PR'ı merge ederek değişiklikleri geri alabilirsiniz. "
+                    "<strong>AUTO_REVERT_MODE=create_revert_pr</strong> olduğu için otomatik merge yapılmadı."
                 )
             elif revert_status_val == "required":
                 revert_notice = (
@@ -406,11 +408,14 @@ class EmailService:
                     "lütfen manuel olarak revert edin."
                 )
             elif revert_status_val in ("revert_failed", "revert_conflict"):
+                sebep = revert_error_msg or "Bilinmeyen hata"
                 revert_notice = (
-                    "RevertAgent değişiklikleri geri almaya çalıştı ancak <strong>başarısız oldu</strong>. "
+                    "Revert PR oluşturuldu ancak <strong>otomatik merge edilemedi</strong>. "
+                    f"<strong>Sebep:</strong> {sebep} "
                     "Lütfen branch'ı manuel olarak revert edin veya "
                     "GitHub token yetkilerini kontrol edin "
-                    "(gerekli: Contents Read/Write, Pull Requests Read/Write, Metadata Read)."
+                    "(gerekli: Contents Read/Write, Pull Requests Read/Write, Metadata Read). "
+                    "Başarısız merge hâlâ hedef branch'te mevcut olabilir."
                 )
             else:
                 revert_notice = (
