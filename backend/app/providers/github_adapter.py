@@ -57,6 +57,9 @@ class GitHubAdapter(ProviderAdapter):
                 commit_sha=merge_commit_sha,
                 commit_messages=[pr.get("title", "")],
                 is_merge_event=True,
+                pr_node_id=pr.get("node_id"),
+                pr_number=pr.get("number"),
+                pr_url=pr.get("html_url"),
                 raw_payload=payload,
             )
 

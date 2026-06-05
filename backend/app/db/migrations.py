@@ -28,6 +28,16 @@ _MIGRATIONS = [
      "ALTER TABLE merge_review_runs ADD COLUMN revert_error_message TEXT"),
     ("merge_review_runs", "reverted_at",
      "ALTER TABLE merge_review_runs ADD COLUMN reverted_at DATETIME"),
+    ("merge_review_runs", "pull_request_number",
+     "ALTER TABLE merge_review_runs ADD COLUMN pull_request_number INTEGER"),
+    ("merge_review_runs", "pull_request_url",
+     "ALTER TABLE merge_review_runs ADD COLUMN pull_request_url VARCHAR(1000)"),
+    ("scm_event_logs", "pull_request_number",
+     "ALTER TABLE scm_event_logs ADD COLUMN pull_request_number INTEGER"),
+    ("scm_event_logs", "pull_request_node_id",
+     "ALTER TABLE scm_event_logs ADD COLUMN pull_request_node_id VARCHAR(500)"),
+    ("scm_event_logs", "pull_request_url",
+     "ALTER TABLE scm_event_logs ADD COLUMN pull_request_url VARCHAR(1000)"),
 ]
 
 

@@ -17,6 +17,8 @@ class MergeReviewRun(Base):
     source_branch = Column(String(500))
     target_branch = Column(String(500))
     commit_sha = Column(String(100))
+    pull_request_number = Column(Integer)
+    pull_request_url = Column(String(1000))
     actor_username = Column(String(255))
     status = Column(String(50), default="pending")   # pending, running, completed, failed, skipped
     result = Column(String(50))                       # success, failed

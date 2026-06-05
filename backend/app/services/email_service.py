@@ -358,14 +358,14 @@ class EmailService:
             reverted_at         = getattr(review_run, "reverted_at", None)
 
             _REVERT_LABELS = {
-                "not_required":             ("GEREKLİ DEĞİL",                      "#16a34a"),
-                "required":                 ("⚠ GEREKLİ",                          "#f97316"),
-                "started":                  ("⏳ BAŞLADI",                          "#6366f1"),
-                "revert_pr_created":        ("🔀 REVERT PR OLUŞTURULDU",            "#6366f1"),
-                "revert_auto_merge_started":("⏳ OTOMATİK MERGE BAŞLADI",           "#6366f1"),
-                "reverted":                 ("✅ OTOMATİK GERİ ALINDI",             "#16a34a"),
-                "revert_conflict":          ("⚠ ÇAKIŞMA — MANUEL MÜDAHALE GEREKLİ","#dc2626"),
-                "revert_failed":            ("❌ BAŞARISIZ — MANUEL MÜDAHALE GEREKLİ","#dc2626"),
+                "not_required":             ("GEREKLİ DEĞİL",                           "#16a34a"),
+                "required":                 ("⚠ GEREKLİ — Pull request event gerekli",  "#f97316"),
+                "started":                  ("⏳ BAŞLADI",                               "#6366f1"),
+                "revert_pr_created":        ("🔀 REVERT PR OLUŞTURULDU",                 "#6366f1"),
+                "revert_auto_merge_started":("⏳ OTOMATİK MERGE BAŞLADI",                "#6366f1"),
+                "reverted":                 ("✅ OTOMATİK GERİ ALINDI",                  "#16a34a"),
+                "revert_conflict":          ("⚠ ÇAKIŞMA — MANUEL MÜDAHALE GEREKLİ",    "#dc2626"),
+                "revert_failed":            ("❌ BAŞARISIZ — MANUEL MÜDAHALE GEREKLİ",  "#dc2626"),
             }
             rs_label, rs_color = _REVERT_LABELS.get(revert_status_val, ("⚠ GEREKLİ", "#f97316"))
 
@@ -396,10 +396,21 @@ class EmailService:
                     "RevertAgent bir <strong>revert PR oluşturdu</strong>. "
                     "PR'ı merge ederek değişiklikleri geri alabilirsiniz."
                 )
+            elif revert_status_val == "required":
+                revert_notice = (
+                    "RevertAgent pull request bilgisini çözümleyemedi. "
+                    "Otomatik revert için GitHub webhook ayarlarında "
+                    "<strong>Pull requests</strong> event'i de aktif edilmelidir "
+                    "(Settings → Webhooks → Edit → Pull requests). "
+                    "Başarısız merge hâlâ sprint branch'inde mevcut olabilir — "
+                    "lütfen manuel olarak revert edin."
+                )
             elif revert_status_val in ("revert_failed", "revert_conflict"):
                 revert_notice = (
                     "RevertAgent değişiklikleri geri almaya çalıştı ancak <strong>başarısız oldu</strong>. "
-                    "Lütfen branch'ı manuel olarak revert edin."
+                    "Lütfen branch'ı manuel olarak revert edin veya "
+                    "GitHub token yetkilerini kontrol edin "
+                    "(gerekli: Contents Read/Write, Pull Requests Read/Write, Metadata Read)."
                 )
             else:
                 revert_notice = (

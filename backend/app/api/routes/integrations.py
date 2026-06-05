@@ -100,13 +100,28 @@ def webhook_info(integration_id: int, db: Session = Depends(get_db)):
         "integration_id": i.id,
         "provider": i.provider,
         "instructions": [
-            f"1. Go to your GitHub repo → Settings → Webhooks → Add webhook.",
+            "1. Go to your GitHub repo → Settings → Webhooks → Add webhook.",
             f"2. Payload URL: https://YOUR-NGROK.ngrok.io/api/webhooks/{i.provider}/{i.id}",
             "3. Content type: application/json",
             f"4. Secret: {i.webhook_secret}",
-            "5. Events: check 'Pull requests' AND 'Pushes'.",
+            "5. Events: select 'Let me select individual events', then check BOTH:",
+            "   - Pull requests  ← REQUIRED for automatic revert (provides PR node_id)",
+            "   - Pushes         ← used as fallback if Pull request event is missing",
             "6. Save the webhook.",
+            "",
+            "NOTE: Automatic revert works best when the 'Pull requests' event is enabled.",
+            "Without it, RevertAgent cannot resolve the merged pull request and will",
+            "set revert_status=required instead of automatically reverting the merge.",
+            "",
+            "GitHub token required permissions (fine-grained PAT or classic token):",
+            "  Contents: Read and Write",
+            "  Pull Requests: Read and Write",
+            "  Metadata: Read",
         ],
+        "revert_note": (
+            "Automatic revert requires the 'Pull requests' GitHub webhook event. "
+            "Without it, revert_status will be set to 'required' and manual action is needed."
+        ),
     }
 
 

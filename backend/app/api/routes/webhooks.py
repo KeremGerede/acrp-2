@@ -106,6 +106,8 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
             source_branch=event_log.source_branch,
             target_branch=event_log.target_branch,
             commit_sha=event_log.commit_sha,
+            pull_request_number=event_log.pull_request_number,
+            pull_request_url=event_log.pull_request_url,
             actor_username=actor_username,
             status="running",
             started_at=review_start,
@@ -294,6 +296,9 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
             elif _rs in ("revert_failed", "revert_conflict"):
                 subject = f"[REVERT FAILED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
                 notification_type = "revert_failed"
+            elif _rs == "required":
+                subject = f"[REVERT REQUIRED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
+                notification_type = "revert_required"
             else:
                 subject = f"[REVIEW FAILED - MERGE BLOCKED] {task_key or 'N/A'} - {sprint_name or 'N/A'}"
                 notification_type = "review_failed"
@@ -429,6 +434,9 @@ async def handle_webhook(
         detected_sprint=sprint_name,
         detected_task_key=task_key,
         is_merge_event=normalized.is_merge_event,
+        pull_request_number=normalized.pr_number,
+        pull_request_node_id=normalized.pr_node_id,
+        pull_request_url=normalized.pr_url,
         raw_payload_json=json.dumps(payload)[:50000],
     )
     db.add(event_log)

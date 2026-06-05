@@ -16,6 +16,8 @@ class MergeReviewRunResponse(BaseModel):
     source_branch: Optional[str] = None
     target_branch: Optional[str] = None
     commit_sha: Optional[str] = None
+    pull_request_number: Optional[int] = None
+    pull_request_url: Optional[str] = None
     actor_username: Optional[str] = None
     status: str
     result: Optional[str] = None

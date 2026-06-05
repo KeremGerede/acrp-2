@@ -28,4 +28,7 @@ class NormalizedSCMEvent:
     commit_sha: Optional[str] = None
     commit_messages: List[str] = field(default_factory=list)
     is_merge_event: bool = False
+    pr_node_id: Optional[str] = None
+    pr_number: Optional[int] = None
+    pr_url: Optional[str] = None
     raw_payload: Any = None

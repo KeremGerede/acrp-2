@@ -28,6 +28,27 @@ mutation RevertPullRequest($pullRequestId: ID!, $title: String, $body: String) {
 }
 """
 
+# Substrings that indicate a GitHub token permission / scope error
+_PERMISSION_ERROR_FRAGMENTS = (
+    "Resource not accessible by personal access token",
+    "Although you appear to have the correct authorization credentials",
+    "Must have admin rights",
+    "INSUFFICIENT_SCOPES",
+    "Resource protected by organization SAML enforcement",
+    "Your token has not been granted",
+)
+
+_PERMISSION_ERROR_DETAIL = (
+    "GitHub token lacks the required permissions to create a revert PR. "
+    "Required scopes / fine-grained permissions: "
+    "Contents (Read & Write), Pull Requests (Read & Write), Metadata (Read). "
+    "Update your token in the integration settings and retry."
+)
+
+
+def _is_permission_error(msg: str) -> bool:
+    return any(fragment in msg for fragment in _PERMISSION_ERROR_FRAGMENTS)
+
 
 class RevertService:
 
@@ -40,13 +61,12 @@ class RevertService:
             logger.warning("[RevertService] No GitHub token — API calls may fail on private repos")
         return h
 
-    # ── PR info extraction ─────────────────────────────────────────────────────
+    # ── PR info extraction from stored event ──────────────────────────────────
 
     def extract_pr_info_from_event(self, event_log) -> Tuple[Optional[str], Optional[int]]:
         """
-        Extract (pr_node_id, pr_number) from the stored raw webhook payload.
-        Works for GitHub pull_request merge events.
-        Returns (None, None) if the event is a push (no pull_request key) or payload is missing.
+        Legacy: parse (pr_node_id, pr_number) from raw webhook JSON.
+        Used when the event was logged before dedicated columns were added.
         """
         try:
             raw = json.loads(event_log.raw_payload_json or "{}")
@@ -58,6 +78,41 @@ class RevertService:
             logger.warning(f"[RevertService] Could not parse raw payload: {exc}")
             return None, None
 
+    # ── REST: resolve PR node_id from PR number ───────────────────────────────
+
+    def find_pr_node_id_by_number(
+        self,
+        repo_full_name: str,
+        pr_number: int,
+        token: Optional[str],
+    ) -> Optional[str]:
+        """
+        Fetch the GraphQL node_id for a known PR number via REST API.
+        GET /repos/{owner}/{repo}/pulls/{number}
+        Returns node_id string or None.
+        """
+        headers = self._auth_headers(token)
+        url = f"{_GITHUB_API}/repos/{repo_full_name}/pulls/{pr_number}"
+        try:
+            resp = requests.get(url, headers=headers, timeout=20)
+            if resp.ok:
+                data = resp.json()
+                node_id = data.get("node_id")
+                if node_id:
+                    logger.info(f"[RevertService] Resolved node_id for PR #{pr_number}: {node_id}")
+                    return node_id
+                logger.warning(f"[RevertService] PR #{pr_number} found but node_id missing in response")
+            else:
+                logger.warning(
+                    f"[RevertService] GET pulls/{pr_number} returned {resp.status_code}: "
+                    f"{resp.text[:200]}"
+                )
+        except Exception as exc:
+            logger.warning(f"[RevertService] find_pr_node_id_by_number failed: {exc}")
+        return None
+
+    # ── REST: find PR by merge commit SHA ─────────────────────────────────────
+
     def find_pr_by_commit(
         self,
         repo_full_name: str,
@@ -65,30 +120,33 @@ class RevertService:
         token: Optional[str],
     ) -> Tuple[Optional[str], Optional[int]]:
         """
-        Fallback: find the PR associated with a merge commit via REST API.
-        Uses GET /repos/{owner}/{repo}/commits/{sha}/pulls.
+        Fallback: find PR associated with a merge commit SHA.
+        GET /repos/{owner}/{repo}/commits/{sha}/pulls  (GA endpoint, no preview header needed)
         Returns (pr_node_id, pr_number) or (None, None).
         """
-        headers = {
-            **self._auth_headers(token),
-            # groot-preview header required for commits-to-pulls association
-            "Accept": "application/vnd.github.groot-preview+json",
-        }
+        headers = self._auth_headers(token)
         url = f"{_GITHUB_API}/repos/{repo_full_name}/commits/{commit_sha}/pulls"
         try:
             resp = requests.get(url, headers=headers, timeout=20)
             if resp.ok:
                 prs = resp.json()
                 if prs:
-                    return prs[0].get("node_id"), prs[0].get("number")
-                logger.info(f"[RevertService] No PRs found for commit {commit_sha}")
+                    pr = prs[0]
+                    logger.info(
+                        f"[RevertService] Found PR #{pr.get('number')} for commit {commit_sha}"
+                    )
+                    return pr.get("node_id"), pr.get("number")
+                logger.info(f"[RevertService] No PRs associated with commit {commit_sha}")
             else:
-                logger.warning(f"[RevertService] commit→pulls lookup returned {resp.status_code}")
+                logger.warning(
+                    f"[RevertService] commit→pulls lookup returned {resp.status_code} "
+                    f"for {commit_sha}: {resp.text[:200]}"
+                )
         except Exception as exc:
-            logger.warning(f"[RevertService] PR lookup by commit failed: {exc}")
+            logger.warning(f"[RevertService] find_pr_by_commit failed: {exc}")
         return None, None
 
-    # ── Revert PR creation ─────────────────────────────────────────────────────
+    # ── GraphQL: create revert PR ─────────────────────────────────────────────
 
     def create_revert_pr_graphql(
         self,
@@ -100,8 +158,8 @@ class RevertService:
         Create a revert PR via GitHub GraphQL revertPullRequest mutation.
 
         Returns:
-          {"ok": True, "pr_number": int, "pr_url": str, "branch_name": str}
-          {"ok": False, "error": str}
+          {"ok": True,  "pr_number": int, "pr_url": str, "branch_name": str}
+          {"ok": False, "permission_error": bool, "error": str}
         """
         headers = {
             **self._auth_headers(token),
@@ -125,15 +183,25 @@ class RevertService:
         try:
             resp = requests.post(_GITHUB_GQL, json=gql_payload, headers=headers, timeout=30)
             data = resp.json()
+
             if "errors" in data:
-                return {"ok": False, "error": str(data["errors"])}
+                raw_error = str(data["errors"])
+                perm = _is_permission_error(raw_error)
+                error_msg = _PERMISSION_ERROR_DETAIL if perm else raw_error
+                logger.error(f"[RevertService] GraphQL error (permission={perm}): {raw_error[:300]}")
+                return {"ok": False, "permission_error": perm, "error": error_msg}
+
             revert_pr = (
                 data.get("data", {})
                     .get("revertPullRequest", {})
                     .get("revertPullRequest", {})
             )
             if not revert_pr:
-                return {"ok": False, "error": "Empty revertPullRequest response from GraphQL"}
+                return {
+                    "ok": False,
+                    "permission_error": False,
+                    "error": "Empty revertPullRequest response from GraphQL",
+                }
             return {
                 "ok": True,
                 "pr_number": revert_pr.get("number"),
@@ -142,9 +210,9 @@ class RevertService:
                 "error": None,
             }
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "permission_error": False, "error": str(exc)}
 
-    # ── PR merge ───────────────────────────────────────────────────────────────
+    # ── REST: merge a PR ──────────────────────────────────────────────────────
 
     def merge_pr_rest(
         self,
@@ -159,7 +227,7 @@ class RevertService:
 
         Returns:
           {"ok": True}
-          {"ok": False, "conflict": bool, "error": str}
+          {"ok": False, "conflict": bool, "permission_error": bool, "error": str}
         """
         headers = self._auth_headers(token)
         url = f"{_GITHUB_API}/repos/{repo_full_name}/pulls/{pr_number}/merge"
@@ -170,19 +238,23 @@ class RevertService:
         try:
             resp = requests.put(url, json=payload, headers=headers, timeout=20)
             if resp.status_code in (200, 201):
-                return {"ok": True, "conflict": False, "error": None}
+                return {"ok": True, "conflict": False, "permission_error": False, "error": None}
             data = resp.json() if resp.content else {}
             msg = data.get("message", f"HTTP {resp.status_code}")
             conflict = resp.status_code in (405, 409)
-            return {"ok": False, "conflict": conflict, "error": msg}
+            perm = resp.status_code == 403 or _is_permission_error(msg)
+            if perm:
+                msg = _PERMISSION_ERROR_DETAIL
+            return {"ok": False, "conflict": conflict, "permission_error": perm, "error": msg}
         except Exception as exc:
-            return {"ok": False, "conflict": False, "error": str(exc)}
+            return {"ok": False, "conflict": False, "permission_error": False, "error": str(exc)}
 
-    # ── Safe fallback ──────────────────────────────────────────────────────────
+    # ── Safe fallback ─────────────────────────────────────────────────────────
 
     def mark_revert_required(self, db: Session, review_run: MergeReviewRun, reason: str) -> None:
-        """Fallback: mark revert as required without any GitHub API call."""
+        """Mark revert as required without any GitHub API call."""
         review_run.revert_status = "required"
+        review_run.revert_error_message = reason
         if not review_run.gate_reason:
             review_run.gate_reason = reason
         db.commit()

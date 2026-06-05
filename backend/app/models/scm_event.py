@@ -24,5 +24,8 @@ class SCMEventLog(Base):
     detected_sprint = Column(String(255))
     detected_task_key = Column(String(100))
     is_merge_event = Column(Boolean, default=False)
+    pull_request_number = Column(Integer)
+    pull_request_node_id = Column(String(500))
+    pull_request_url = Column(String(1000))
     raw_payload_json = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
