@@ -7,12 +7,21 @@ import Badge from '../components/Badge'
 
 const SEV_COLOR = { critical: 'border-red-700', high: 'border-orange-700', warning: 'border-yellow-700', info: 'border-blue-700' }
 
+const FA_STATUS = {
+  passed:               { label: 'Geçti',            cls: 'bg-green-900/40 text-green-300 border border-green-700' },
+  passed_with_warnings: { label: 'Uyarı ile Geçti',  cls: 'bg-yellow-900/40 text-yellow-300 border border-yellow-700' },
+  failed:               { label: 'Başarısız',         cls: 'bg-red-900/40 text-red-300 border border-red-700' },
+}
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+
 export default function MergeReviewDetail() {
   const { id } = useParams()
   const [review, setReview] = useState(null)
   const [findings, setFindings] = useState([])
   const [steps, setSteps] = useState([])
   const [notifications, setNotifications] = useState([])
+  const [reportData, setReportData] = useState({ passed_checks: [], file_assessments: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -22,21 +31,43 @@ export default function MergeReviewDetail() {
       client.get(`/api/merge-reviews/${id}/findings`),
       client.get(`/api/merge-reviews/${id}/steps`),
       client.get(`/api/notifications/merge-reviews/${id}`),
-    ]).then(([r, f, s, n]) => {
-      setReview(r.data); setFindings(f.data); setSteps(s.data); setNotifications(n.data)
+      client.get(`/api/merge-reviews/${id}/report-data`).catch(() => ({ data: {} })),
+    ]).then(([r, f, s, n, rd]) => {
+      setReview(r.data)
+      setFindings(f.data)
+      setSteps(s.data)
+      setNotifications(n.data)
+      setReportData(rd.data || {})
     }).catch(e => setError(e.message)).finally(() => setLoading(false))
   }, [id])
 
   if (loading) return <Loading />
   if (!review) return <ErrorMessage message={error || 'Not found'} />
 
+  const fileAssessments = reportData.file_assessments || []
+  const passedChecks = reportData.passed_checks || []
+  const pdfUrl = `${API_BASE}/api/merge-reviews/${id}/pdf`
+
   return (
     <div>
+      {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <Link to="/merge-reviews" className="text-slate-500 hover:text-slate-300 text-sm">← Reviews</Link>
         <h1 className="text-xl font-bold text-slate-100">Review #{review.id}</h1>
         <Badge value={review.result || review.status} />
         <Badge value={review.risk_level} />
+        <div className="ml-auto">
+          <a
+            href={pdfUrl}
+            download
+            className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm rounded-lg border border-slate-600 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            PDF İndir
+          </a>
+        </div>
       </div>
       <ErrorMessage message={error} />
 
@@ -68,6 +99,76 @@ export default function MergeReviewDetail() {
           <h2 className="text-sm font-semibold text-slate-300 mb-2">Summary</h2>
           <p className="text-slate-400 text-sm">{review.report_summary}</p>
           {review.decision_reason && <p className="text-slate-500 text-xs mt-2 italic">{review.decision_reason}</p>}
+        </div>
+      )}
+
+      {/* Dosya Bazlı İnceleme Sonucu */}
+      {fileAssessments.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">
+            Dosya Bazlı İnceleme Sonucu
+          </h2>
+          <div className="flex flex-col gap-3">
+            {fileAssessments.map((fa, i) => {
+              const st = FA_STATUS[fa.status] || FA_STATUS.passed
+              return (
+                <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+                  <div className="flex items-center gap-3 mb-2">
+                    <code className="text-cyan-300 text-xs font-mono">{fa.file_path}</code>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${st.cls}`}>{st.label}</span>
+                  </div>
+                  {fa.passed_points?.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs text-green-400 font-semibold mb-1">Geçen noktalar</p>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {fa.passed_points.map((pt, j) => (
+                          <li key={j} className="text-slate-400 text-xs">{pt}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {fa.remaining_points?.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs text-yellow-400 font-semibold mb-1">Kalan noktalar</p>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {fa.remaining_points.map((pt, j) => (
+                          <li key={j} className="text-slate-400 text-xs">{pt}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Başarıyla Geçen Kontroller */}
+      {passedChecks.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">
+            Başarıyla Geçen Kontroller ({passedChecks.length})
+          </h2>
+          <div className="flex flex-col gap-2">
+            {passedChecks.map((pc, i) => (
+              <div key={i} className="bg-slate-800 border border-green-800/60 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-green-400 mt-0.5 shrink-0">✓</span>
+                  <div>
+                    <p className="text-slate-200 text-sm font-medium">{pc.check_title}</p>
+                    <code className="text-slate-500 text-xs font-mono">{pc.file_path}</code>
+                    {pc.evidence && (
+                      <p className="text-slate-400 text-xs mt-1">
+                        <span className="text-slate-500">Kanıt:</span> {pc.evidence}
+                      </p>
+                    )}
+                    {pc.reason && <p className="text-slate-500 text-xs mt-0.5">{pc.reason}</p>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -196,9 +196,10 @@ def generate_review_pdf(
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(17, 24, 39)
             pdf.multi_cell(0, 6, _s(f"Dosya: {fa.get('file_path', '-')}"))
+            pdf.ln(0)  # reset X after multi_cell
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(55, 65, 81)
-            pdf.multi_cell(0, 5, _s(f"Durum: {status_label}"))
+            pdf.cell(0, 5, _s(f"Durum: {status_label}"), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(1)
             passed_pts = fa.get("passed_points", [])
             if passed_pts:
@@ -207,6 +208,7 @@ def generate_review_pdf(
                 pdf.set_text_color(55, 65, 81)
                 for pt in passed_pts:
                     pdf.multi_cell(0, 5, _s(f"  - {pt}"))
+                    pdf.ln(0)  # reset X after each bullet
             remaining_pts = fa.get("remaining_points", [])
             if remaining_pts:
                 _field_label(pdf, "Kalan noktalar")
@@ -214,6 +216,7 @@ def generate_review_pdf(
                 pdf.set_text_color(55, 65, 81)
                 for pt in remaining_pts:
                     pdf.multi_cell(0, 5, _s(f"  - {pt}"))
+                    pdf.ln(0)  # reset X after each bullet
             pdf.ln(4)
             pdf.set_draw_color(229, 231, 235)
             pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
@@ -231,20 +234,24 @@ def generate_review_pdf(
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(17, 24, 39)
             pdf.multi_cell(0, 5, _s(pc.get("file_path", "-")))
+            pdf.ln(0)  # reset X after multi_cell
             _field_label(pdf, "Kontrol")
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(17, 24, 39)
             pdf.multi_cell(0, 5, _s(pc.get("check_title", "-")))
+            pdf.ln(0)  # reset X after multi_cell
             if pc.get("evidence"):
                 _field_label(pdf, "Kanit")
                 pdf.set_font("Helvetica", "", 10)
                 pdf.set_text_color(55, 65, 81)
                 pdf.multi_cell(0, 5, _s(pc["evidence"]))
+                pdf.ln(0)  # reset X after multi_cell
             if pc.get("reason"):
                 _field_label(pdf, "Aciklama")
                 pdf.set_font("Helvetica", "", 10)
                 pdf.set_text_color(55, 65, 81)
                 pdf.multi_cell(0, 5, _s(pc["reason"]))
+                pdf.ln(0)  # reset X after multi_cell
             pdf.ln(4)
             pdf.set_draw_color(229, 231, 235)
             pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
@@ -262,25 +269,29 @@ def generate_review_pdf(
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(17, 24, 39)
             pdf.multi_cell(0, 6, f"{idx}. {file_line}")
+            pdf.ln(0)  # reset X after multi_cell
             _field_label(pdf, "Durum")
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(55, 65, 81)
-            pdf.multi_cell(0, 5, sev.upper())
+            pdf.cell(0, 5, sev.upper(), new_x="LMARGIN", new_y="NEXT")
             if f.issue:
                 _field_label(pdf, "Sorun")
                 pdf.set_font("Helvetica", "", 10)
                 pdf.set_text_color(17, 24, 39)
                 pdf.multi_cell(0, 5, _s(f.issue))
+                pdf.ln(0)  # reset X after multi_cell
             if f.suggestion:
-                _field_label(pdf, "Beklenen")
+                _field_label(pdf, "Beklened")
                 pdf.set_font("Helvetica", "", 10)
                 pdf.set_text_color(55, 65, 81)
                 pdf.multi_cell(0, 5, _s(f.suggestion))
+                pdf.ln(0)  # reset X after multi_cell
             if f.explanation:
                 _field_label(pdf, "Etki")
                 pdf.set_font("Helvetica", "", 10)
                 pdf.set_text_color(55, 65, 81)
                 pdf.multi_cell(0, 5, _s(f.explanation))
+                pdf.ln(0)  # reset X after multi_cell
             pdf.ln(4)
             pdf.set_draw_color(229, 231, 235)
             pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
