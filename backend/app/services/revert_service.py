@@ -202,10 +202,15 @@ class RevertService:
         }
         title = f"Revert: {task_key} — failed code review"
         body = (
-            f"This PR was automatically created by RevertAgent because the code review "
-            f"for task **{task_key}** was rejected by CodeReviewAgent.\n\n"
-            "Please merge this PR to undo the failed merge, or close it "
-            "after fixing the review findings and re-merging the task branch."
+            f"This revert PR was automatically created by the Agentic DevOps platform "
+            f"(RevertAgent) because the code review for task **{task_key}** was rejected "
+            f"by CodeReviewAgent.\n\n"
+            "When `AUTO_REVERT_MODE=create_and_merge_revert_pr` is active, the system will "
+            "automatically attempt to merge this revert PR to undo the failed merge — "
+            "no manual action is required in that mode.\n\n"
+            "If automatic merge is disabled or fails, this PR documents the revert that "
+            "should be applied. Review the original code review findings before re-merging "
+            "the task branch."
         )
         gql_payload = {
             "query": _REVERT_PR_MUTATION,

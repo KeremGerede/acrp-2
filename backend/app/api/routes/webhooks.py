@@ -127,31 +127,75 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
         db.commit()
         db.refresh(review_run)
 
-        # ── Run ReviewerAgent ────────────────────────────────────────────────
-        try:
-            report = run_review(
-                db=db,
-                tenant_id=tenant_id,
-                integration_id=integration_id,
+        # ── K1 guard: no changed files / diff → never treat as success ───────
+        # An empty diff means the code was NOT actually reviewed (token / SHA /
+        # repo access problem, or an empty merge). We must not let that pass as
+        # "no findings → success". Mark the review failed so the gate blocks the
+        # pipeline. We deliberately do NOT auto-revert here: an empty diff is an
+        # access/system problem, not a confirmed code-quality rejection, and
+        # auto-reverting a possibly-good merge on a transient API failure is worse
+        # than leaving it for manual review.
+        diff_unavailable = not changed_files
+
+        if diff_unavailable:
+            logger.warning(
+                f"No changed files/diff available for {task_key}/{sprint_name} — "
+                "marking review as failed (merge blocked); auto-revert will be skipped."
+            )
+            report = {
+                "result": "failed",
+                "summary": (
+                    "Değişen dosyalar/diff GitHub'dan alınamadığı için kod incelemesi yapılamadı. "
+                    "Güvenlik gereği merge gate'i bloklandı ve bu merge otomatik olarak başarılı "
+                    "sayılmadı. Lütfen merge'i manuel olarak inceleyin."
+                ),
+                "risk_level": "high",
+                "decision_reason": (
+                    "changed_files boş / diff erişilemedi. Fake success üretmemek için review "
+                    "'failed' olarak işaretlendi."
+                ),
+                "findings": [],
+                "improvements": [],
+                "passed_checks": [],
+                "failed_checks": [],
+                "file_assessments": [],
+                "blocking_findings_count": 0,
+            }
+            log_step(
+                db, tenant_id=tenant_id, agent_name="ReviewerAgent",
+                tool_name="changed_files_fetcher_tool",
+                step_name="review_skipped_no_changed_files",
+                status="failed",
+                integration_id=integration_id, event_log_id=event_log_id,
                 merge_review_run_id=review_run.id,
-                event_log_id=event_log_id,
-                changed_files=changed_files,
-                actor_username=actor_username,
-                commit_messages=commit_messages,
-                sprint_name=sprint_name,
-                task_key=task_key,
-                source_branch=event_log.source_branch or "",
-                target_branch=event_log.target_branch or "",
-                repository_full_name=repo_full_name,
+                output_summary="No changed files / diff available — review marked failed, gate will block.",
             )
-        except Exception as exc:
-            logger.error(f"ReviewerAgent failed: {exc}")
-            update_review_status(
-                db, review_run.id, "failed", "failed",
-                decision_reason=f"System error: {exc}",
-                report_summary="Review could not be completed due to a system error.",
-            )
-            return
+        else:
+            # ── Run ReviewerAgent ────────────────────────────────────────────
+            try:
+                report = run_review(
+                    db=db,
+                    tenant_id=tenant_id,
+                    integration_id=integration_id,
+                    merge_review_run_id=review_run.id,
+                    event_log_id=event_log_id,
+                    changed_files=changed_files,
+                    actor_username=actor_username,
+                    commit_messages=commit_messages,
+                    sprint_name=sprint_name,
+                    task_key=task_key,
+                    source_branch=event_log.source_branch or "",
+                    target_branch=event_log.target_branch or "",
+                    repository_full_name=repo_full_name,
+                )
+            except Exception as exc:
+                logger.error(f"ReviewerAgent failed: {exc}")
+                update_review_status(
+                    db, review_run.id, "failed", "failed",
+                    decision_reason=f"System error: {exc}",
+                    report_summary="Review could not be completed due to a system error.",
+                )
+                return
 
         # ── Save findings ────────────────────────────────────────────────────
         findings_objs: List[Finding] = []
@@ -268,18 +312,41 @@ def _process_task_merge(event_log_id: int, integration_id: int) -> None:
             db.add(blocked_promotion)
             db.commit()
 
-            # ── RevertAgent: automatically revert the failed merge ───────────
-            try:
-                run_revert(
-                    db=db,
-                    tenant_id=tenant_id,
-                    integration_id=integration_id,
-                    review_run=review_run,
-                    event_log_id=event_log_id,
-                    integration=integration,
+            if diff_unavailable:
+                # Diff could not be fetched → block the merge but do NOT auto-revert.
+                review_run.gate_reason = (
+                    "Changed files/diff alınamadığı için kod incelemesi yapılamadı. "
+                    "Merge güvenlik gereği bloklandı; manuel inceleme gerekli."
                 )
-            except Exception as _rev_exc:
-                logger.error(f"RevertAgent raised an unexpected error: {_rev_exc}")
+                review_run.revert_status = "not_required"
+                db.commit()
+                log_step(
+                    db, tenant_id=tenant_id, agent_name="RevertAgent",
+                    tool_name="revert_agent",
+                    step_name="revert_skipped_no_changed_files",
+                    status="completed",
+                    integration_id=integration_id,
+                    event_log_id=event_log_id,
+                    merge_review_run_id=review_run.id,
+                    output_summary="Diff unavailable — automatic revert skipped; manual review required.",
+                )
+                logger.info(
+                    "[Webhook] Auto-revert skipped — diff unavailable, merge blocked for "
+                    f"{task_key}/{sprint_name}. Manual review required."
+                )
+            else:
+                # ── RevertAgent: automatically revert the failed merge ───────
+                try:
+                    run_revert(
+                        db=db,
+                        tenant_id=tenant_id,
+                        integration_id=integration_id,
+                        review_run=review_run,
+                        event_log_id=event_log_id,
+                        integration=integration,
+                    )
+                except Exception as _rev_exc:
+                    logger.error(f"RevertAgent raised an unexpected error: {_rev_exc}")
 
         # ── Update user stats ────────────────────────────────────────────────
         stat_field = "successful_review_count" if report["result"] == "success" else "failed_review_count"
@@ -464,33 +531,45 @@ async def handle_webhook(
     db.commit()
     db.refresh(event_log)
 
-    if event_type == EventType.task_to_sprint_merge:
-        # ── Duplicate detection ───────────────────────────────────────────────
-        # The same merge produces both a pull_request.closed event and a push
-        # event that share the same merge commit SHA. Only the first-arriving
-        # event should run the pipeline; later ones must be skipped so we don't
-        # double-review or send a second (REVERT REQUIRED) email.
-        if normalized.commit_sha:
-            prior = db.query(SCMEventLog).filter(
-                SCMEventLog.integration_id == integration_id,
-                SCMEventLog.commit_sha == normalized.commit_sha,
-                SCMEventLog.event_type == EventType.task_to_sprint_merge.value,
-                SCMEventLog.id < event_log.id,
-            ).first()
-            if prior:
-                logger.info(
-                    "[Webhook] Duplicate merge event detected from "
-                    f"{event_type.value} event (commit={normalized.commit_sha}, "
-                    f"prior_event_id={prior.id}). Skipping review/revert because an "
-                    "earlier event already processed this merge."
-                )
-                return {
-                    "status": "duplicate",
-                    "event_id": event_log.id,
-                    "duplicate_of": prior.id,
-                }
+    # ── O1: review/revert is driven ONLY by pull_request.closed + merged=true ─
+    # Such events always carry a pull_request_number. Push events (and any other
+    # merge-like event without a PR number) are logged only and must NEVER start
+    # the review/revert/test/promotion pipeline — even if they arrive first.
+    is_pr_merge_event = (
+        event_type == EventType.task_to_sprint_merge and normalized.pr_number is not None
+    )
+
+    if is_pr_merge_event:
+        # ── O2: duplicate detection by pull_request_number ────────────────────
+        # Guards against GitHub redelivering the same pull_request.closed event.
+        # A prior push event has pull_request_number = NULL, so it can never match
+        # here — meaning a push arriving first never blocks the real PR event.
+        prior = db.query(SCMEventLog).filter(
+            SCMEventLog.integration_id == integration_id,
+            SCMEventLog.event_type == EventType.task_to_sprint_merge.value,
+            SCMEventLog.pull_request_number == normalized.pr_number,
+            SCMEventLog.id < event_log.id,
+        ).first()
+        if prior:
+            logger.info(
+                "[Webhook] Duplicate pull_request merge event detected "
+                f"(pr_number={normalized.pr_number}, prior_event_id={prior.id}). "
+                "Skipping — this merge was already processed."
+            )
+            return {
+                "status": "duplicate",
+                "event_id": event_log.id,
+                "duplicate_of": prior.id,
+            }
 
         background_tasks.add_task(_process_task_merge, event_log.id, integration_id)
         return {"status": "accepted", "event_id": event_log.id, "event_type": event_type.value}
 
+    # Push events and PR-less merge-like events: log only, never trigger pipeline.
+    if event_type == EventType.task_to_sprint_merge:
+        logger.info(
+            "[Webhook] Merge-like event without pull_request_number (likely a push) — "
+            "logged only, review/revert NOT triggered. "
+            f"source={normalized.source_branch} target={normalized.target_branch}"
+        )
     return {"status": "logged", "event_id": event_log.id, "event_type": event_type.value}
