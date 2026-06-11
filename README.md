@@ -172,7 +172,6 @@ Review başarısız olduğunda:
 
 ## 8. Dev/Test Mergeability Mantığı
 
-> **Durum:** Bu bölümde anlatılan model **henüz kodda uygulanmamıştır**; mevcut çalışan Agentic DevOps yapısından bu projeye taşınacak/eklenmesi planlanan **hedef tasarımdır**. Aşağıdaki kurallar gelecekteki davranışı tanımlar.
 
 **Seçilen model:** "Default true + eligibility/pool kontrolü + sprint blocking".
 
@@ -432,4 +431,4 @@ README.md
 
 ## 17. Sonuç
 
-Bu proje, staj kapsamında adım adım geliştirilen ve CI/CD süreçlerinde AI destekli code review, functional test yönetimi, promotion kontrolü ve auto-revert yaklaşımını birleştiren web tabanlı, multi-tenant bir platformdur. İlk çalışan fazda temel review, gate, raporlama ve auto-revert mantıkları kurulmuş; provider-adapter mimarisi ile genişlemeye hazır hâle getirilmiştir. Sonraki aşamalarda Dev/Test mergeability modeli, test dependency yönetimi, ek provider desteği ve frontend görünürlükleri geliştirilecektir.
+Bu proje, CI/CD süreçlerinde AI destekli code review, functional test yönetimi, promotion kontrolü ve auto-revert yaklaşımını birleştiren web tabanlı, multi-tenant bir platformdur. İlk çalışan fazda temel review, gate, raporlama ve auto-revert mantıkları kurulmuş; provider-adapter mimarisi ile genişlemeye hazır hâle getirilmiştir. Sonraki aşamalarda Dev/Test mergeability modeli, test dependency yönetimi, ek provider desteği ve frontend görünürlükleri geliştirilecektir.
