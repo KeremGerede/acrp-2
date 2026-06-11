@@ -1,394 +1,278 @@
 # Agentic DevOps Code Review and Functional Test Reporting Platform
 
-SCM platformlarıyla entegre çalışan, multi-tenant ve web tabanlı bir **Agentic DevOps** platformu. Sistem; developer'ın yaptığı merge işlemlerini webhook ile algılar, değişen kodu **CodeReviewAgent** ile analiz eder, detaylı Türkçe rapor üretir, başarısız review durumunda pipeline'ı durdurur, functional test ve promotion akışını engeller, **RevertAgent** ile hatalı merge'i otomatik geri alır ve sonucu mail / PDF / dashboard üzerinden görünür hâle getirir.
+Bu proje, CI/CD süreçlerinde **AI destekli code review**, **functional test raporlama**, **promotion kontrolü** ve **otomatik revert** yaklaşımlarını tek bir web tabanlı platformda birleştiren, multi-tenant bir sistemdir.
 
-> Bu proje **staj kapsamında adım adım geliştirilen** bir Agentic DevOps projesidir. Aşağıda anlatılanlar projenin **mevcut çalışan fazını** yansıtır; production-ready bir ürün iddiası taşımaz.
-
----
-
-## 1. Proje Özeti
-
-- **Multi-tenant** mimari: her kayıt `tenant_id` ile izole edilir.
-- **Provider-adapter** mimarisi ile ilerler; platforma özel webhook payload'ları ortak bir internal event formatına dönüştürülür.
-- **GitHub şu anda gerçek çalışan provider'dır.**
-- **GitLab** ve **Azure DevOps** adapter'ları, ileride genişletilmek üzere **stub** olarak durmaktadır (`NotImplementedError`).
-- Akış tamamen otomatiktir: developer merge yapar, gerisini sistem yürütür.
+> Bu çalışma bir mezuniyet projesi değil, **staj kapsamında adım adım geliştirilen** bir platformdur. Aşağıda anlatılanlar projenin **ilk çalışan fazını** yansıtır; tamamlanan bölümler "çalışıyor", henüz tamamlanmayanlar ise "planlanan / geliştirme aşaması" olarak açıkça ayrılmıştır.
 
 ---
 
-## 2. Projenin Amacı
+## 1. Proje Hakkında
 
-Developer bir task branch'ini hedef/sprint branch'e merge ettiğinde sistem otomatik olarak:
+**Amaç:** Bir task branch'i sprint branch'e merge edildiğinde, değişen kodu otomatik olarak incelemek, kalite kapısından (gate) geçirmek, başarısız durumda pipeline'ı durdurup hatalı merge'i geri almak ve tüm bu süreci mail/PDF raporu ile görünür kılmak.
 
-- merge event'ini algılar,
-- değişen dosyaları ve diff içeriğini çeker,
-- **CodeReviewAgent** ile kodu inceler,
-- **Review Rules** kurallarını dikkate alır,
-- detaylı **Türkçe review raporu** üretir,
-- **deterministic review policy** uygular,
-- başarısız review durumunda **gate'i kapatır**,
-- functional testleri **çalıştırmaz**,
-- promotion / readiness akışını **engeller**,
-- **RevertAgent** ile GitHub revert PR oluşturur,
-- `AUTO_REVERT_MODE=create_and_merge_revert_pr` ise revert PR'ı **otomatik merge eder**,
-- mail ve PDF raporu gönderir.
+**Çözdüğü problem:** Manuel kod inceleme ve hatalı merge yönetimi zaman alır ve insana bağımlıdır. Bu platform; review kararını, gate davranışını, functional test/promotion akışını ve revert sürecini otomatikleştirir, izlenebilir hâle getirir.
 
-Amaç, manuel kod inceleme ve hatalı merge yönetimi sürecini azaltmak; bir merge'in kalite kapısından geçip geçmediğini otomatik, izlenebilir ve raporlanabilir hâle getirmektir.
+**CI/CD içindeki konumu:**
+- **AI code review:** Merge sonrası değişen diff incelenir, yapay zekâ ile bulgular üretilir.
+- **Functional test reporting:** Review onaylandıysa fonksiyonel testler çalıştırılıp raporlanır.
+- **Promotion:** Test başarılıysa değişiklik DEV/TEST ortamına "hazır" olarak işaretlenir.
+- **Auto-revert:** Review başarısızsa hatalı merge için revert PR oluşturulur ve (yapılandırmaya göre) otomatik merge edilir.
+
+**Yapı:** Sistem multi-tenant'tır (her kayıt `tenant_id` ile izole edilir) ve web tabanlı bir arayüze sahiptir. Merge işlemini sistem başlatmaz; tamamlanmış merge'lere webhook üzerinden **tepki verir**.
 
 ---
 
-## 3. Güncel Çalışan Akış
+## 2. Projenin Genel Akışı
 
 ```
-Developer task branch'i merge eder
-  → GitHub pull_request.closed + merged=true webhook event'i gelir
-  → event normalize edilir
-  → task_to_sprint_merge algılanır
-  → aynı merge'e ait duplicate push event varsa skip edilir
-  → changed files / diff çekilir
-  → MergeReviewRun oluşturulur
-  → CodeReviewAgent değişen kodları inceler
-  → Review Rules prompt'a dahil edilir
-  → structured JSON review raporu üretilir
-  → deterministic review policy uygulanır
-  → Findings kaydedilir
-  → Türkçe PDF / mail raporu oluşturulur
-  → ReviewGateService sonucu değerlendirir
+Developer task branch üzerinde çalışır
+  → Task branch sprint branch'e merge edilir (Pull Request merge)
+  → GitHub webhook event'i gelir (pull_request.closed + merged=true)
+  → Sistem event'i normalize eder (ortak internal event formatı)
+  → task_to_sprint_merge olarak algılanır
+  → Changed files / diff GitHub API ile çekilir
+  → MergeReviewRun kaydı oluşturulur
+  → AI code review agent (ReviewerAgent) çalışır
+  → Review rules prompt'a dahil edilir
+  → Structured JSON review çıktısı üretilir
+  → Deterministic review policy uygulanır
+  → Findings veritabanına kaydedilir
+  → Mail/PDF raporu oluşturulur
+  → ReviewGateService kararı verir
 ```
 
-**Review approved ise:**
-```
-  → functional tests çalışabilir
-  → test başarılıysa promotion / readiness akışı devam eder
-```
+**Review başarılıysa:** gate `passed` → functional test çalışabilir → test başarılıysa promotion/readiness kaydı oluşturulur.
 
-**Review rejected ise:**
-```
-  → gate_status = blocked
-  → functional tests skipped
-  → promotion blocked
-  → RevertAgent çalışır
-  → GitHub revert PR oluşturulur
-  → AUTO_REVERT_MODE=create_and_merge_revert_pr ise revert PR otomatik merge edilir
-  → [MERGE REVERTED] maili gönderilir
-```
+**Review başarısızsa:** gate `blocked` → functional test skipped → promotion blocked → RevertAgent tetiklenir → revert PR oluşturulur → (auto-merge modunda) otomatik merge edilir.
 
 ---
 
-## 4. Teknoloji Stack'i
+## 3. Kullanılan Teknolojiler
 
 ### Backend
-- Python
-- FastAPI
-- SQLAlchemy
-- SQLite
-- Pydantic / pydantic-settings
-- Gemini LLM (`google-generativeai`)
-- SMTP tabanlı EmailService
-- GitHub REST + GraphQL API (`requests`)
-- FPDF2 ile PDF rapor üretimi
+- **Python**
+- **FastAPI** (web framework, `BackgroundTasks` ile arka plan pipeline)
+- **SQLAlchemy** (ORM)
+- **SQLite** (varsayılan veritabanı — `DATABASE_URL` ile değiştirilebilir; projede yalnızca SQLite kullanılmaktadır)
+- **Pydantic / pydantic-settings** (şema ve konfigürasyon)
+- **Gemini LLM** (`google-generativeai`) — code review ve test özeti
+- **SMTP tabanlı EmailService** (mail bildirimleri)
+- **GitHub REST + GraphQL API** (`requests`) — diff çekme, revert PR oluşturma/merge
+- **FPDF2** (PDF rapor üretimi)
+
+> Not: Projede LangGraph, Celery veya Redis gibi bir orkestrasyon/iş kuyruğu **kullanılmamaktadır**. Arka plan işleri FastAPI `BackgroundTasks` ile yürütülür.
 
 ### Frontend
-- React
-- Vite
-- Tailwind CSS
-- Axios
-- React Router
-- lucide-react ikonları
+- **React**
+- **Vite**
+- **Tailwind CSS**
+- **Axios**
+- **React Router**
+- **lucide-react** (ikonlar)
+
+### DevOps / Entegrasyon
+- **GitHub webhook** (aktif çalışan provider)
+- **Provider-adapter mimarisi** (GitLab / Azure DevOps için genişletilebilir iskelet)
+- **Branch bazlı review ve promotion akışı**
 
 ---
 
-## 5. Mimari Katmanlar
-
-| Katman | Açıklama |
-|---|---|
-| **Multi-Tenant Layer** | Her kayıt `tenant_id` ile izole edilir. |
-| **Platform Integration Layer** | `ProjectIntegration` ile repo, branch pattern, webhook secret, mail alıcıları tanımlanır. |
-| **Provider Adapter Layer** | GitHub aktif; GitLab/Azure stub. Platforma özel payload → ortak event. |
-| **Webhook / Event Layer** | Gelen webhook'lar doğrulanır, normalize edilir, `SCMEventLog` olarak loglanır. |
-| **Branch / Event Detection Layer** | Branch isimlerinden sprint/task çözümlenir, event türü tespit edilir. |
-| **CodeReviewAgent Layer** | Diff üzerinden LLM destekli kod incelemesi. |
-| **ReviewGate Layer** | Review sonucuna göre pipeline'ı açar/kapatır. |
-| **RevertAgent Layer** | Reddedilen merge için revert PR oluşturur ve gerekirse otomatik merge eder. |
-| **Functional Test Layer** | Sadece gate açıkken testleri çalıştırır. |
-| **Report Layer** | Türkçe PDF / mail raporları üretir. |
-| **Notification Layer** | SMTP üzerinden mail gönderir, `NotificationLog`'a yazar. |
-| **Dashboard / UI Layer** | React tabanlı yönetim arayüzü. |
-| **Logging & Status Tracking Layer** | `AgentStep` ile her adım izlenebilir şekilde loglanır. |
-
----
-
-## 6. Provider Adapter Mimarisi
-
-- **GitHubAdapter** → aktif çalışan adapter.
-- **GitLabAdapter** ve **AzureDevOpsAdapter** → stub (genişletilebilir iskelet).
-- Provider adapter'lar, platforma özel webhook payload'larını ortak bir **internal normalized event** formatına dönüştürür. Bu sayede pipeline'ın geri kalanı provider'dan bağımsız çalışır.
-
-### Önemli normalized event alanları
-
-| Alan | Açıklama |
-|---|---|
-| `provider` | Kaynak platform (örn. `github`) |
-| `tenant_id` | Tenant kimliği |
-| `integration_id` | Integration kimliği |
-| `repository_full_name` | `owner/repo` formatında repo adı |
-| `event_type` | Tespit edilen event türü |
-| `actor_username` | İşlemi yapan kullanıcı |
-| `source_branch` | Merge edilen kaynak branch |
-| `target_branch` | Merge edilen hedef branch |
-| `commit_sha` | Merge commit SHA |
-| `pull_request_number` | PR numarası |
-| `pull_request_node_id` | PR GraphQL node_id (revert için kritik) |
-| `pull_request_url` | PR URL'i |
-| `is_merge_event` | Merge event olup olmadığı |
-| `raw_payload` | Orijinal webhook payload'ı |
-
----
-
-## 7. GitHub Webhook Davranışı
-
-Sistem şu anda **primary event** olarak şunu kullanır:
-
-```
-pull_request.closed + merged=true
-```
-
-Bu event tercih edilir çünkü PR metadata, source branch, target branch, merge commit SHA ve PR node_id gibi bilgileri daha güvenilir sağlar.
-
-Ek davranışlar:
-
-- **push event'leri** fallback / duplicate-skip mantığında kullanılır.
-- **Duplicate merge event'leri** skip edilir (aynı `commit_sha` + `task_to_sprint_merge` daha önce işlendiyse).
-- **Revert branch event'leri** skip edilir — sistem kendi oluşturduğu revert PR'ı tekrar review/revert etmez.
-
-Skip edilen revert branch prefix'leri:
-
-```
-revert-
-revert/
-acrp-revert-
-```
-
----
-
-## 8. CodeReviewAgent
-
-CodeReviewAgent'ın görevleri:
-
-- Yalnızca **changed files / diff** üzerinden review yapar (diff dışındaki kodu uydurmaz).
-- Şu alanlarda problem arar: bug, eksik logic, güvenlik açığı (SQL injection, XSS, hardcoded secret vb.), maintainability, code quality ve architecture.
-- Aktif **Review Rules** kurallarını prompt'a dahil eder ve her bulguda ihlal edilen kuralı referans alır.
-- **Structured JSON output** üretir.
-- `findings` oluşturur.
-- `passed_checks`, `failed_checks` ve `file_assessments` üretir.
-- Çıktı dili **Türkçe**'dir; API, endpoint, controller, DTO, webhook, merge gibi teknik terimler İngilizce kalır.
-
-LLM çıktısı, kaydedilmeden önce **normalize** edilir; geçersiz severity/category/status değerleri güvenli varsayılanlara çekilir.
-
----
-
-## 9. Deterministic Review Policy
-
-LLM kararına körü körüne güvenilmez. LLM çıktısı normalize edildikten sonra **deterministic policy** son kararı verir:
-
-| Durum | Sonuç |
-|---|---|
-| `high` / `critical` severity finding | **rejected / failed** |
-| `high` / `critical` severity Review Rule ihlali | **rejected / failed** |
-| Sadece `warning` / `info` finding | approved / success |
-| Hiç finding yok | approved / success |
-
-Böylece LLM yanlışlıkla "success" dese bile, kritik bir bulgu varsa merge yine de reddedilir.
-
----
-
-## 10. Review Raporu
-
-Raporlar **Türkçe ve detaylıdır**. PDF ve mail raporu şu bölümleri içerir:
-
-- **Detaylar**
-- **Özet**
-- **Karar Gerekçesi**
-- **Bulgular**
-- **Dosya Bazlı İnceleme Sonucu**
-- **Başarıyla Geçen Kontroller**
-- **Kalan / Düzeltilmesi Gereken Kısımlar**
-- **İyileştirme Önerileri**
-
-Notlar:
-
-- Bulgular kısaltılmaz; finding açıklamaları detaylı gösterilir.
-- Özet **kanıta dayalıdır** — sadece genel AI yorumu değil, diff ve bulgulara dayanan teknik bir değerlendirme sunar.
-- Raporlar mail ekinde **PDF** olarak da gönderilir.
-
----
-
-## 11. ReviewGateService
-
-Review tamamlandıktan sonra pipeline'ın devam edip etmeyeceğine **ReviewGateService** karar verir.
-
-**Review approved:**
-- `gate_status = passed`
-- functional tests çalışabilir
-- promotion / readiness akışı devam edebilir
-
-**Review rejected:**
-- `gate_status = blocked`
-- functional tests skipped
-- promotion blocked
-- `revert_required = true`
-- RevertAgent tetiklenir
-
----
-
-## 12. RevertAgent
-
-RevertAgent'ın güncel çalışan davranışı:
-
-1. Yalnızca **review rejected** olduktan sonra çalışır (gate blocked bloğu içinde).
-2. `pull_request.closed` event'inden **PR node_id** bilgisini çözer (event log kolonu → REST → raw payload → commit lookup sırasıyla).
-3. GitHub **GraphQL `revertPullRequest`** mutation'ı ile revert PR oluşturur.
-4. Revert PR'ın **base branch'inin**, orijinal failed merge'in **target branch'i** ile aynı olduğunu doğrular.
-5. `AUTO_REVERT_MODE=create_and_merge_revert_pr` ise GitHub REST API ile revert PR'ı otomatik merge eder:
-
-   ```
-   PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge
-   ```
-
-6. GitHub merge'i onaylarsa (`merged: true`) `revert_status = reverted` olur ve `[MERGE REVERTED]` maili gönderilir.
-
-**Güvenlik kuralı:** GitHub merge işlemini onaylamadıkça `revert_status` asla `reverted` yapılmaz — sahte başarı raporlanmaz.
-
-### Test edilen başarılı davranış
-
-- Revert PR oluşturuldu.
-- Revert PR otomatik merge edildi.
-- GitHub PR durumu **Merged** olarak görüldü.
-- Loglarda `PUT /pulls/{id}/merge status=200` görüldü.
-- Duplicate push event skip edildi.
-- System revert branch event'leri skip edildi.
-
----
-
-## 13. Revert Mode Ayarları
-
-`.env` içindeki ayar:
-
-```
-AUTO_REVERT_MODE=create_and_merge_revert_pr
-```
-
-Desteklenen değerler:
-
-| Değer | Davranış |
-|---|---|
-| `disabled` | Sadece `revert_required` olarak işaretler, GitHub'da işlem yapmaz. |
-| `create_revert_pr` | Revert PR oluşturur ve **açık bırakır** (manuel merge beklenir). |
-| `create_and_merge_revert_pr` | Revert PR oluşturur ve **otomatik merge eder** (mevcut default). |
-
----
-
-## 14. Functional Test Akışı
-
-- Functional tests **yalnızca review approved ise** çalışır.
-- Review gate `blocked` ise testler **skipped** olur (runner içinde ayrıca ikinci bir guard vardır).
-- Test sonucu **deterministic** olarak runner output / **exit code** üzerinden belirlenir (`exit_code == 0` → success).
-- LLM yalnızca test çıktısını **özetler**; tek karar kaynağı değildir.
-- Test komutları operatör tarafından `FunctionalTestConfig` üzerinden tanımlanır ve `shell=False` ile, timeout'lu olarak çalıştırılır.
-
----
-
-## 15. Promotion Akışı
-
-- Promotion şu anda **otomatik deploy değildir.**
-- Mevcut aşamada promotion, `ready_for_test_environment` anlamına gelir (TEST ortamına hazır işareti).
-- Review failed ise promotion **blocked** olur ve izlenebilirlik için bir `blocked_by_review_gate` kaydı tutulur.
-- Review success + functional test success sonrası promotion / readiness akışı devam eder ve `[PROMOTION READY]` maili gönderilir.
-
----
-
-## 16. Notification Sistemi
-
-- Mailler **SMTP tabanlı EmailService** ile gönderilir.
-- Review raporları **PDF olarak mail ekinde** iletilir.
-- Her mail için `NotificationLog` kaydı oluşturulur (`pending` → `sent` / `failed`).
-
-Önemli mail subject örnekleri:
-
-```
-[REVIEW SUCCESS]
-[REVIEW FAILED - MERGE BLOCKED]
-[MERGE REVERTED]
-[REVERT PR CREATED]
-[REVERT FAILED]
-[REVERT REQUIRED]
-[TEST SUCCESS]
-[TEST FAILED]
-[PROMOTION READY]
-```
-
----
-
-## 17. Frontend
-
-Mevcut sayfalar:
-
+## 4. Mimari Yapı
+
+### Backend
+
+- **API route katmanı** (`app/api/routes/`): REST endpoint'leri ve webhook endpoint'i.
+- **Webhook endpoint'i** (`webhooks.py`): Gelen event'i doğrular, normalize eder, `SCMEventLog` olarak loglar ve pipeline'ı tetikler.
+- **Provider adapter katmanı** (`app/providers/`): Platforma özel webhook payload'larını ortak event formatına çeviren adapter'lar.
+- **ReviewerAgent** (`app/agents/reviewer_agent.py`): Review rule'ları yükler, diff'i prompt'a dönüştürür, LLM'i çağırır, çıktıyı normalize edip deterministic policy uygular.
+- **Functional test runner** (`app/services/functional_test_runner_service.py` + `app/agents/functional_test_agent.py`): Yapılandırılmış test komutunu çalıştırır, exit code'a göre sonucu belirler.
+- **Promotion** (`functional_test_runner_service.py` içinde): Test başarılıysa `EnvironmentPromotionLog` kaydı oluşturur.
+- **RevertAgent** (`app/agents/revert_agent.py` + `app/services/revert_service.py`): Başarısız review sonrası revert PR oluşturur ve (yapılandırmaya göre) otomatik merge eder.
+- **ReviewGateService** (`app/services/review_gate_service.py`): Review sonucuna göre gate kararını verir.
+- **Veritabanı modelleri** (`app/models/`): Aşağıda Bölüm 9'da listelenmiştir.
+- **Mail/PDF rapor servisleri** (`email_service.py`, `pdf_report_service.py`).
+
+### Frontend
+
+Mevcut sayfalar (`frontend/src/pages/`):
 - **Dashboard**
-- **Entegrasyonlar**
-- **İnceleme Kuralları**
-- **Test Yapılandırmaları**
-- **Olay Günlükleri**
-- **Birleştirme İncelemeleri**
-- **Birleştirme İnceleme Detayı**
-- **Fonksiyonel Testler**
-- **Fonksiyonel Test Detayı**
-- **Dağıtımlar (Promotions)**
-- **Kullanıcı İstatistikleri**
+- **Entegrasyonlar** (Integrations)
+- **İnceleme Kuralları** (Review Rules)
+- **Test Yapılandırmaları** (Functional Test Configs)
+- **Olay Günlükleri** (Event Logs)
+- **Birleştirme İncelemeleri** (Merge Reviews) + **Birleştirme İnceleme Detayı**
+- **Fonksiyonel Testler** (Functional Tests) + **Fonksiyonel Test Detayı**
+- **Dağıtımlar / Promotions**
+- **Kullanıcı İstatistikleri** (User Stats)
 
-Sidebar durumu:
-
-- Koyu **AGENTDEVOPS** teması korunmuştur.
-- Türkçe etiketli, ikonlu (lucide-react) sidebar uygulanmıştır.
-- **Tenants menüsü sidebar'dan kaldırılmıştır.**
-- Alt **Admin / Yönetici / Çıkış Yap** alanı yoktur.
+> **Sidebar durumu:** Koyu AGENTDEVOPS teması kullanılır; Tenants sayfası route olarak vardır ancak sidebar menüsünden gizlenmiştir.
+>
+> **Planlanan/henüz yok:** "Test Yükleme", "Sprint Detayları" ve "Task Mergeability / Görev Uygunluk Durumu" ekranları **mevcut değildir**; gelecekte eklenmesi planlanmaktadır.
 
 ---
 
-## 18. Önemli Modeller
+## 5. Provider-Adapter Yapısı
 
-| Model | Açıklama |
-|---|---|
-| `Tenant` | Multi-tenant kök kayıt (ad, iletişim e-postası). |
-| `ProjectIntegration` | Repo, provider, branch pattern'leri, webhook secret, mail alıcıları. |
-| `SCMEventLog` | Gelen her webhook event'inin normalize edilmiş kaydı. |
-| `MergeReviewRun` | Bir merge'e ait review çalışmasının tüm durumu (gate, revert dahil). |
-| `Finding` | Review sırasında tespit edilen tekil bulgu. |
-| `ReviewRule` | Tenant/integration bazlı, severity'li inceleme kuralları. |
-| `FunctionalTestConfig` | Çalıştırılacak test komutu ve dizini. |
-| `FunctionalTestRun` | Bir functional test çalışmasının sonucu. |
-| `EnvironmentPromotionLog` | Promotion / readiness kayıtları (blocked dahil). |
-| `NotificationLog` | Gönderilen mail kayıtları ve durumları. |
-| `AgentStep` | Her agent adımının izlenebilir log kaydı. |
-| `UserActivityStats` | Kullanıcı bazlı review/test/promotion sayaçları. |
+Adapter'lar `app/providers/` altındadır ve platforma özel webhook payload'larını ortak bir **normalized event** formatına dönüştürür. Böylece pipeline'ın geri kalanı provider'dan bağımsız çalışır.
+
+- **GitHubAdapter** → **gerçek çalışan** adapter. Webhook parse, diff/commit çekme, revert PR işlemleri burada uygulanır.
+- **GitLabAdapter** → **stub** (geliştirme aşaması; `NotImplementedError`).
+- **AzureDevOpsAdapter** → **stub** (geliştirme aşaması; `NotImplementedError`).
+
+**Amaç:** SCM platformlarına bağımlılığı azaltmak ve yeni sağlayıcı eklemeyi kolaylaştırmak.
+
+**Yeni provider ekleme:** `ProviderAdapter` temel sınıfından türeyen yeni bir adapter yazılır, `parse_webhook_event` ve diff çekme metotları implemente edilir ve `registry.py` üzerinden kaydedilir.
 
 ---
 
-## 19. Environment Variables
+## 6. Code Review Mantığı
 
-Aşağıdaki örnek değerleri `backend/.env` dosyasına kendi değerlerinizle doldurun:
+**Review'ı ne başlatır?**
+- Review **yalnızca** `pull_request.closed + merged=true` event'i ile başlar (bu event PR numarası, source/target branch, merge commit SHA ve PR node_id taşır).
+- **Push event'leri review başlatmaz.** Push event'leri yalnızca loglanır; PR numarası olmadığı için pipeline'ı tetiklemez ve sonradan gelen PR event'ini de engellemez.
+
+**Akış:**
+1. Merge edilen PR'ın `before/after` SHA'ları üzerinden changed files/diff GitHub API ile çekilir (compare → commit fetch fallback'leri ile).
+2. Aktif **Review Rules** prompt'a dahil edilir.
+3. LLM prompt'una merge bağlamı (repo, sprint, task, branch'ler), kurallar ve diff eklenir.
+4. LLM **structured JSON** döndürür (findings, passed_checks, failed_checks, file_assessments, summary, decision_reason).
+5. Çıktı `review_report_normalizer_tool` ile normalize edilir (geçersiz severity/category değerleri güvenli varsayılana çekilir).
+
+**Deterministic review policy** (`review_decision_policy_tool.py`) — LLM kararına körü körüne güvenilmez:
+- **Critical** finding varsa → rejected/failed
+- **High** finding varsa → rejected/failed
+- **High/Critical** seviyeli Review Rule ihlali varsa → rejected/failed
+- Sadece **warning/info** finding varsa → approved/success
+- Hiç finding yoksa → approved/success
+
+> **Boş diff koruması:** Diff alınamadıysa veya changed_files boşsa kod gerçekten incelenmemiş demektir. Bu durumda sistem "finding yok → success" sonucuna **gitmez**; review failed olarak işaretlenir ve gate bloklanır (fake success üretilmez). Bu koruma kodda mevcuttur.
+
+---
+
+## 7. Review Failed ve Auto-Revert Akışı
+
+Review başarısız olduğunda:
+- `gate_status = blocked`
+- functional test **skipped**
+- promotion **blocked**
+- İzlenebilirlik için `EnvironmentPromotionLog` üzerinde `blocked_by_review_gate` kaydı oluşturulur
+- **RevertAgent tetiklenir**
+- Mail/PDF raporu gönderilir
+- Functional test çalışmaz, promotion/readiness kaydı oluşturulmaz
+
+**Auto-revert (kodda mevcut ve çalışıyor):**
+- `pull_request.closed` event'inden PR node_id çözülür.
+- GitHub **GraphQL `revertPullRequest`** mutation'ı ile revert PR oluşturulur.
+- Revert PR'ın base branch'inin, orijinal failed merge'in target branch'i ile aynı olduğu doğrulanır.
+- `AUTO_REVERT_MODE=create_and_merge_revert_pr` ise revert PR GitHub REST API (`PUT /repos/{owner}/{repo}/pulls/{n}/merge`) ile **otomatik merge edilir**.
+- GitHub merge'i onaylarsa `revert_status = reverted` olur; aksi halde `revert_failed` / `revert_conflict` / `required` gibi değerlerle ayrılır. (GitHub onaylamadıkça `reverted` yazılmaz.)
+- **Revert branch skip:** Sistemin kendi oluşturduğu `revert-`, `revert/`, `acrp-revert-` ile başlayan branch event'leri review/revert akışına **sokulmaz** (sonsuz döngü engellenir).
+
+`AUTO_REVERT_MODE` değerleri: `disabled`, `create_revert_pr`, `create_and_merge_revert_pr`.
+
+---
+
+## 8. Dev/Test Mergeability Mantığı
+
+> **Durum:** Bu bölümde anlatılan model **henüz kodda uygulanmamıştır**; mevcut çalışan Agentic DevOps yapısından bu projeye taşınacak/eklenmesi planlanan **hedef tasarımdır**. Aşağıdaki kurallar gelecekteki davranışı tanımlar.
+
+**Seçilen model:** "Default true + eligibility/pool kontrolü + sprint blocking".
+
+**Dev tarafı kuralları:**
+- Her task başlangıçta `dev_mergeable=true` ve `test_mergeable=true` kabul edilebilir.
+- Ancak henüz sprint branch'e merge edilmemiş task'lar **karar havuzuna dahil edilmez**.
+- Dev promotion havuzuna yalnızca sprint'e merge edilmiş, review sürecinden geçmiş ve dev'e henüz promote edilmemiş **aktif** task'lar dahil edilir.
+- Bu havuzda **bir tane bile** `dev_mergeable=false` varsa, sprint → dev promotion **blocked** olur.
+- Failed task düzeltilip yeniden successful review alırsa `dev_mergeable=true` olur.
+- Havuzdaki tüm aktif task'lar true olduğunda sprint branch dev ortamına merge edilebilir.
+
+**Test tarafı kuralları:**
+- Test senaryoları manuel yüklenebilir.
+- Task'lar tek tek veya grup olarak seçilebilir.
+- Bir test senaryosu `required_task_ids=[...]` mantığıyla çalışmalıdır (örn. task3 ve task4 birlikte test edilecekse).
+- **Count tek başına karar vermemelidir**; aksi halde task2 + task3 gibi yanlış kombinasyonlar count'u doldurup hatalı test başlatabilir.
+- Doğru karar, ilgili test senaryosundaki **required task'ların tamamının** dev ortamında bulunup bulunmadığına göre verilmelidir.
+
+---
+
+## 9. Veri Yapısı / Veri Setleri
+
+> Bu projede klasik anlamda bir **ML veri seti kullanılmamıştır**. Sistem, statik bir veri seti üzerinde eğitilmez; canlı SCM verileri ve LLM çıktıları üzerinde çalışır.
+
+Kullanılan veri kaynakları:
+- Pull request / merge metadata (numara, node_id, branch'ler, merge commit SHA)
+- Changed files ve git diff içeriği
+- Review rules (tenant/integration bazlı kurallar)
+- Webhook event logları (`SCMEventLog`)
+- Task, sprint ve promotion kayıtları
+- LLM review çıktıları (findings, checks, file assessments)
+- Functional test sonuçları
+- PDF/mail rapor içerikleri
+
+**Veritabanı modelleri** (`app/models/`):
+- `Tenant` — multi-tenant kök kayıt
+- `ProjectIntegration` — repo, provider, branch pattern'leri, webhook secret, mail alıcıları
+- `PlatformCredential` — entegrasyona ait token
+- `SCMEventLog` — normalize edilmiş webhook event kaydı
+- `MergeReviewRun` — bir merge'e ait review/gate/revert durumu
+- `Finding` — tekil review bulgusu
+- `ReviewRule` — severity'li inceleme kuralları
+- `FunctionalTestConfig` / `FunctionalTestRun` — test komutu ve çalışma sonucu
+- `EnvironmentPromotionLog` — promotion / readiness (blocked dahil)
+- `NotificationLog` — mail kayıtları ve durumları
+- `AgentStep` — her agent adımının izlenebilir logu
+- `UserActivityStats` — kullanıcı bazlı review/test/promotion sayaçları
+- `Repository`, `SyncedSprint`, `SyncedTask` — temel/yardımcı yapılar (sprint/task senkronizasyonu için iskelet; sync endpoint'i şu an **stub**)
+
+> Projede ayrı bir seed/sample veri scripti veya örnek zafiyetli kod dosyası gözlemlenmemiştir.
+
+---
+
+## 10. Karşılaşılan Sorunlar ve Çözümler
+
+- **Push event'in yanlışlıkla review akışını başlatma riski**
+  - **Çözüldü:** Review yalnızca PR merge event'i (`pull_request.closed + merged=true`, PR numarası taşıyan) üzerinden tetiklenir. Push event'leri yalnızca loglanır.
+- **Empty diff / changed_files boş gelme riski**
+  - **Çözüldü:** Diff boşsa fake success üretilmemesi için guard eklendi; review failed olarak işaretlenir ve gate bloklanır.
+- **Review failed sonrası hatalı kodun sprint branch'te kalması**
+  - **Çözüldü:** Auto-revert mekanizması ile failed merge için revert PR oluşturulur ve (auto-merge modunda) otomatik merge edilir.
+- **Aynı merge için duplicate review/revert riski (PR + push birlikte gelince)**
+  - **Çözüldü:** Dedup `pull_request_number` üzerinden yapılır; aynı PR'ın tekrar gelen event'i atlanır, push event PR event'ini bloklamaz.
+- **Repository identifier'ının yanlış formatta (URL) gelmesi**
+  - **Çözüldü:** Tüm GitHub API çağrılarından önce repo adı `owner/repo` formatına normalize edilir.
+- **Default true mergeability'nin yanlış task'ları karar havuzuna sokma riski**
+  - **Planlandı:** Eligibility/pool kontrolü ile yalnızca sprint'e merge edilmiş aktif task'ların havuza dahil edilmesi tasarlandı (Bölüm 8). Bu kısım henüz kodda uygulanmadı.
+- **Test scenario count problemi**
+  - **Planlandı:** Count yerine `required_task_ids` / TaskTest ilişkisi kullanılması tasarlandı; henüz uygulanmadı.
+- **Provider bağımlılığı**
+  - **Çözüldü (temel):** Provider-adapter mimarisi kuruldu; GitHub aktif, GitLab/Azure DevOps stub.
+
+---
+
+## 11. Kurulum
+
+### Backend
+
+```bash
+cd backend
+python -m venv venv
+venv\Scripts\activate        # Windows
+# veya
+source venv/bin/activate     # Linux/Mac
+
+pip install -r requirements.txt
+```
+
+`.env` dosyası (örnek — `backend/.env.example` baz alınarak doldurulmalı). Aşağıdakiler projede gerçekten okunan değişkenlerdir:
 
 ```env
-# LLM
+DATABASE_URL=sqlite:///./agentic_devops.db
+FRONTEND_URL=http://localhost:5173
+
+LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-1.5-flash
 
-# GitHub
-GITHUB_TOKEN=your_github_token
-
-# Webhook secret (varsayılan fallback; her integration kendi secret'ını da üretir)
-DEFAULT_WEBHOOK_SECRET=your_webhook_secret
-
-# SMTP
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your_email
@@ -396,49 +280,26 @@ SMTP_PASSWORD=your_app_password
 SMTP_FROM_EMAIL=your_email
 SMTP_USE_TLS=true
 
-# Revert davranışı
+DEFAULT_WEBHOOK_SECRET=change-me
+GITHUB_TOKEN=your_github_token
 AUTO_REVERT_MODE=create_and_merge_revert_pr
-
-# Diğer
-DATABASE_URL=sqlite:///./agentic_devops.db
-FRONTEND_URL=http://localhost:5173
 ```
 
-Frontend için `frontend/.env.local`:
+> Not: Her entegrasyon (`ProjectIntegration`) oluşturulduğunda kendine ait bir `webhook_secret` otomatik üretilir ve `GET /api/integrations/{id}/webhook-info` ile görüntülenir. GitHub webhook'u kurulurken bu secret kullanılır. `GITLAB_TOKEN` / `WEBHOOK_SECRET` gibi değişkenler **kodda kullanılmadığından** burada yer almaz.
+>
+> ⚠️ Gerçek `.env` ve secret değerleri repoya commit edilmemelidir (`.env` ve `.db` dosyaları `.gitignore` içindedir).
 
-```env
-VITE_API_BASE_URL=http://localhost:8000
-```
-
-> **Webhook secret notu:** Uygulama config'inde global bir `DEFAULT_WEBHOOK_SECRET` bulunur. Buna ek olarak, her `ProjectIntegration` oluşturulduğunda kendine ait bir `webhook_secret` otomatik üretilir ve `GET /api/integrations/{id}/webhook-info` üzerinden görüntülenir. GitHub webhook'unu kurarken bu integration secret'ı kullanılır.
-
-> ⚠️ **Uyarı:** Gerçek `.env` dosyası ve secret değerleri **asla** GitHub'a commit edilmemelidir. `.env` ve veritabanı dosyaları `.gitignore` içinde tutulur; yalnızca `.env.example` commit edilir.
-
----
-
-## 20. Kurulum Talimatları
-
-### Backend
+Backend çalıştırma:
 
 ```bash
-cd backend
-python -m venv venv
-
-# Windows:
-venv\Scripts\activate
-# macOS / Linux:
-source venv/bin/activate
-
-pip install -r requirements.txt
-
-# .env dosyasını hazırla
-copy .env.example .env        # Windows
-# cp .env.example .env        # macOS / Linux
-# .env içine GEMINI_API_KEY, SMTP_*, GITHUB_TOKEN değerlerini gir
-
 python run.py
-# Backend: http://localhost:8000
-# API dokümanı: http://localhost:8000/docs
+# Backend: http://localhost:8000  | API docs: http://localhost:8000/docs
+```
+
+Alternatif:
+
+```bash
+uvicorn app.main:app --reload
 ```
 
 ### Frontend
@@ -450,43 +311,127 @@ npm run dev
 # Frontend: http://localhost:5173
 ```
 
----
+Frontend `.env.local` (API adresi):
 
-## 21. GitHub Webhook Kurulumu
-
-GitHub repo → **Settings → Webhooks → Add webhook**:
-
-- **Payload URL:**
-  ```
-  http://your-server/api/webhooks/github/{integration_id}
-  ```
-  (Lokal geliştirmede `ngrok http 8000` ile bir public URL kullanılabilir.)
-- **Content type:** `application/json`
-- **Secret:** integration webhook secret (webhook-info panelinden)
-- **Events:** `Let me select individual events` → **Pull requests** + **Pushes**
-
-> `pull_request.closed + merged=true`, review/revert akışı için **primary event** olarak kullanılır. `push` event'i fallback/duplicate-skip amacıyla değerlendirilir.
+```env
+VITE_API_BASE_URL=http://localhost:8000
+```
 
 ---
 
-## 22. Bilinen Sınırlamalar ve Sonraki Geliştirmeler
+## 12. Proje Nasıl Kullanılır?
 
-Mevcut çalışan fazın üzerine planlanan iyileştirmeler:
-
-- **Merge Review Detail** ekranında Gate / Revert durumlarını daha görünür hâle getirmek.
-- Revert PR açıklama metnini otomatik merge davranışına uygun şekilde güncellemek.
-- **Review Rules** sistemini instruction, auto_reject, file scope, template ve rule violation reporting ile güçlendirmek.
-- **Integrations** ekranını sadeleştirmek ve repository branch discovery / sync eklemek.
-- GitHub **status / check** entegrasyonu ile pre-merge gating eklemek.
-- PDF **Türkçe karakter** desteğini iyileştirmek.
-- GitHub **noreply** e-posta adreslerini filtrelemek ve configured recipient fallback kullanmak.
-- **Dashboard** görünürlüğünü geliştirmek.
-- İleride daha güçlü **event idempotency / locking** mekanizması eklemek.
+1. **Entegrasyon oluştur:** Entegrasyonlar sayfasından provider (`github`) ve repository bilgilerini gir.
+2. **Repository/provider bilgilerini gir:** `repository_full_name` (örn. `owner/repo`), branch pattern'leri, mail alıcıları.
+3. **Webhook URL al:** `GET /api/integrations/{id}/webhook-info` ile webhook URL'i ve secret'ı görüntüle.
+4. **GitHub tarafında webhook tanımla:** Payload URL `…/api/webhooks/github/{integration_id}`, content type `application/json`, secret ve "Pull requests" + "Pushes" event'leri.
+5. **Review rules ekle:** İnceleme Kuralları sayfasından kurallar tanımla.
+6. **Merge yap:** Task branch → sprint branch PR'ını GitHub'da merge et.
+7. **Review sonucunu takip et:** Birleştirme İncelemeleri sayfasından sonucu ve detayını izle.
+8. **Failed durumu gör:** Başarısız review'da rapor, gate ve revert durumunu incele.
+9. **Test senaryosu yükle:** Test Yapılandırmaları sayfasından test komutunu tanımla.
+10. **Promotion durumunu takip et:** Dağıtımlar sayfasından promotion/readiness kayıtlarını izle.
 
 ---
 
-## 23. Notlar
+## 13. API Endpointleri
 
-- Sistem merge işlemini kendisi başlatmaz; yalnızca tamamlanmış merge'lere webhook üzerinden **tepki verir**.
-- Otomatik conflict çözümü, otomatik deployment veya harici iş kuyruğu (Celery/Redis vb.) **bulunmamaktadır.**
-- Bu doküman, projenin **staj kapsamında adım adım geliştirilen mevcut çalışan fazını** anlatır.
+> Kimlik doğrulama (auth) katmanı bu fazda **bulunmamaktadır**; auth endpoint'i yoktur.
+
+- **Health:** `GET /api/debug/health`
+- **Tenants:** `GET/POST /api/tenants`
+- **Integrations:** `GET /api/integrations`, `POST /api/integrations`, `GET/PATCH/DELETE /api/integrations/{id}`, `GET /api/integrations/{id}/webhook-info`, `POST /api/integrations/{id}/sync` (stub)
+- **Review Rules:** `GET/POST /api/review-rules`, `PATCH/DELETE /api/review-rules/{id}`, `PATCH /api/review-rules/{id}/toggle`
+- **Functional Test Configs:** `GET/POST /api/functional-test-configs`, `PATCH/DELETE /api/functional-test-configs/{id}`, `PATCH /api/functional-test-configs/{id}/toggle`
+- **Webhooks:** `POST /api/webhooks/{provider}/{integration_id}`
+- **Events:** `GET /api/events`, `GET /api/events/{id}`
+- **Merge Reviews:** `GET /api/merge-reviews`, `GET /api/merge-reviews/{id}`, `GET /api/merge-reviews/{id}/findings`, `GET /api/merge-reviews/{id}/steps`, `GET /api/merge-reviews/{id}/report-data`, `GET /api/merge-reviews/{id}/pdf`
+- **Functional Tests:** `GET /api/functional-tests`, `GET /api/functional-tests/{id}`
+- **Promotions:** `GET /api/promotions`, `GET /api/promotions/{id}`
+- **Notifications:** `GET /api/notifications`, `GET /api/notifications/merge-reviews/{id}`, `GET /api/notifications/functional-tests/{id}`
+- **Stats:** `GET /api/stats/users`
+
+---
+
+## 14. Mevcut Durum
+
+**Çalışan kısımlar:**
+- Dashboard ve yönetim arayüzü (React)
+- Entegrasyon yönetimi
+- Review rules yönetimi
+- Webhook event logging (`SCMEventLog`)
+- AI code review (ReviewerAgent + Gemini)
+- Deterministic review policy
+- Boş diff guard (fake success engelleme)
+- PR-only review trigger (push event review başlatmaz)
+- Duplicate event koruması (`pull_request_number` bazlı dedup)
+- Repository normalizasyonu (`owner/repo`)
+- Functional test / promotion temel yapısı
+- Mail/PDF raporlama (üst durum kutusu dahil)
+- **Auto-revert** (revert PR oluşturma + otomatik merge + revert branch skip)
+
+**Eksik / geliştirilecek kısımlar:**
+- Dev/Test Mergeability modeli ve mantığı (Bölüm 8 — henüz kodda yok)
+- Task Mergeability frontend görünümü
+- Test scenario dependency yönetimi (`required_task_ids` / TaskTest)
+- Provider genişletmeleri (GitLab / Azure DevOps stub durumda)
+- Merge Review Detail ekranında gate/revert durumunun daha görünür yapılması
+- Sprint/Task senkronizasyonu (sync endpoint'i stub)
+- Role-based access control (RBAC) ve auth
+
+---
+
+## 15. Gelecek Geliştirmeler
+
+- GitHub/GitLab/Azure DevOps provider desteğini genişletme
+- Auto-revert entegrasyonunu güçlendirme
+- Dedup mekanizmasını iyileştirme (webhook redelivery senaryoları)
+- Task Mergeability ekranı
+- Test scenario dependency yönetimi
+- Daha detaylı PDF/mail durum blokları
+- Daha kapsamlı audit log
+- Role-based access control (RBAC)
+- Production deployment hazırlığı
+
+---
+
+## 16. Klasör Yapısı
+
+```text
+backend/
+  app/
+    agents/        # reviewer_agent, functional_test_agent, revert_agent
+    api/
+      routes/      # webhook + REST endpoint'leri
+    core/          # config, security
+    db/            # database, migrations
+    models/        # SQLAlchemy modelleri
+    providers/     # github_adapter, gitlab_adapter(stub), azure_devops_adapter(stub),
+                   # base, registry, normalized_events
+    schemas/       # Pydantic şemaları
+    services/      # review_gate, revert_service, email_service,
+                   # functional_test_runner, pdf_report, llm_service, ...
+    tools/         # review_rule_loader, changed_files_fetcher,
+                   # review_decision_policy, review_report_normalizer, functional_test_report
+    main.py
+  run.py
+  requirements.txt
+  .env.example
+frontend/
+  src/
+    api/           # client.js (axios)
+    components/    # Layout, Badge, Loading, ErrorMessage
+    pages/         # Dashboard, Integrations, ReviewRules, FunctionalTestConfigs,
+                   # EventLogs, MergeReviews, MergeReviewDetail, FunctionalTests,
+                   # FunctionalTestDetail, Promotions, UserStats, Tenants
+    App.jsx
+    main.jsx
+  package.json
+README.md
+```
+
+---
+
+## 17. Sonuç
+
+Bu proje, staj kapsamında adım adım geliştirilen ve CI/CD süreçlerinde AI destekli code review, functional test yönetimi, promotion kontrolü ve auto-revert yaklaşımını birleştiren web tabanlı, multi-tenant bir platformdur. İlk çalışan fazda temel review, gate, raporlama ve auto-revert mantıkları kurulmuş; provider-adapter mimarisi ile genişlemeye hazır hâle getirilmiştir. Sonraki aşamalarda Dev/Test mergeability modeli, test dependency yönetimi, ek provider desteği ve frontend görünürlükleri geliştirilecektir.
