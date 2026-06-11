@@ -2,8 +2,6 @@
 
 Bu proje, CI/CD süreçlerinde **AI destekli code review**, **functional test raporlama**, **promotion kontrolü** ve **otomatik revert** yaklaşımlarını tek bir web tabanlı platformda birleştiren, multi-tenant bir sistemdir.
 
-> Bu çalışma bir mezuniyet projesi değil, **staj kapsamında adım adım geliştirilen** bir platformdur. Aşağıda anlatılanlar projenin **ilk çalışan fazını** yansıtır; tamamlanan bölümler "çalışıyor", henüz tamamlanmayanlar ise "planlanan / geliştirme aşaması" olarak açıkça ayrılmıştır.
-
 ---
 
 ## 1. Proje Hakkında
