@@ -1,6 +1,6 @@
 # Agentic DevOps Code Review and Functional Test Reporting Platform
 
-Bu proje, CI/CD süreçlerinde **AI destekli code review**, **functional test raporlama**, **promotion kontrolü** ve **otomatik revert** yaklaşımlarını tek bir web tabanlı platformda birleştiren, multi-tenant bir sistemdir.
+Bu proje, CI/CD süreçlerinde **AI destekli code review**, **functional test raporlama**, **promotion kontrolü** ve **otomatik revert** yaklaşımlarını tek bir web tabanlı platformda birleştiren, çok platformlu bir sistemdir.
 
 ---
 
